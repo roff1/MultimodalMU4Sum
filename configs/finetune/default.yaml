@@ -1,0 +1,18 @@
+finetune:
+  epochs: 3
+  batch_size: 4
+  grad_accum_steps: 4
+  lr: 2.0e-4
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  num_workers: 2
+  bf16: true
+  save_steps: 200           # optimizer steps between checkpoints (final one is always saved)
+  log_steps: 10
+  keep_last_checkpoints: 2
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]

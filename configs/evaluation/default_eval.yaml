@@ -1,0 +1,15 @@
+evaluation:
+  split: "test"
+  metrics:                  # keys in mu4sum.evaluation.metrics.METRICS
+    - "bleu"
+    - "rouge"
+    - "bertscore"
+  batch_size: 8
+  num_workers: 2
+  save_predictions: true
+  limit: null
+  generation:
+    max_new_tokens: 256
+    temperature: 0.0        # 0 = greedy
+  bertscore:
+    model_type: "distilbert-base-uncased"

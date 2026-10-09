@@ -1,0 +1,23 @@
+model:
+  name: "Qwen/Qwen2-VL-7B-Instruct"
+  auto_class: "AutoModelForImageTextToText"   # any transformers Auto* class name
+  torch_dtype: "bfloat16"
+  # 4-bit quantization is applied only when CUDA + bitsandbytes are available;
+  # otherwise the loader warns and falls back to torch_dtype.
+  load_in_4bit: true
+  compute_dtype: "float16"
+  device_map: "auto"
+  processor:
+    kwargs:                       # forwarded to AutoProcessor.from_pretrained
+      min_pixels: 200704          # 256 * 28 * 28
+      max_pixels: 401408          # 512 * 28 * 28
+    nested_images: false          # true for processors expecting one image list per sample
+
+# Teacher-side generation (hybrid data creation). Used when this model acts as teacher.
+generation:
+  max_new_tokens: 512
+  max_retries: 3          # retries AFTER the first attempt (total attempts = max_retries + 1)
+  base_temperature: 0.1
+  temperature_step: 0.3   # attempt k uses min(base + k * step, max_temperature)
+  max_temperature: 1.0
+  top_p: 0.9

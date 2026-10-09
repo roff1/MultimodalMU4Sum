@@ -1,0 +1,69 @@
+dataset:
+  name: "iu_xray"
+
+  # Where raw data comes from. type: kaggle | huggingface | url | local
+  source:
+    type: "kaggle"
+    handle: "masrursabab/iu-chest-x-rays-cleaned"
+
+  # Processor registered in mu4sum.data.processors.PROCESSORS.
+  # "grouped_csv": one CSV row per image, rows grouped by study id into a single
+  # record holding a variable number of images (e.g. frontal + lateral views).
+  processor: "grouped_csv"
+  csv_filename: "cleaned_dataset.csv"
+
+  # NOTE: column names below are a best guess for the Kaggle CSV and must be checked
+  # against the real file. A missing column raises an error listing the actual ones.
+  columns:
+    study_id: "uid"
+    image: "filename"
+    projection: "projection"     # optional (set to null if absent); used to order views
+    report:                      # report-field name -> CSV column (used as teacher context)
+      findings: "findings"
+      impression: "impression"
+
+  images:
+    resolution: "320"            # options: 256 | 299 | 320 | 512
+    search_subdir: "{resolution}" # sub-folder of the raw root holding images (null = whole root)
+
+  filtering:
+    min_report_chars: 10
+    view_order: ["Frontal", "Lateral"]
+
+  # Splits are made at STUDY level (never per image) to avoid leakage between views.
+  splits:
+    train: 0.8
+    validation: 0.1
+    test: 0.1
+
+# Aspects and their descriptions. They drive both the teacher prompt (hybrid data
+# generation) and the student prompts (fine-tuning / unlearning / evaluation).
+aspects:
+  names:
+    - "heart_and_mediastinum"
+    - "lungs_and_pleura"
+    - "bones_soft_tissue_and_devices"
+    - "impression"
+  descriptions:
+    heart_and_mediastinum: "Concise synthesis of cardiac silhouette and mediastinal findings."
+    lungs_and_pleura: "Concise synthesis of lung and pleura findings including opacities or effusions."
+    bones_soft_tissue_and_devices: "Concise synthesis of bones, soft tissues, and devices."
+    impression: "A one-sentence diagnostic summary directly derived from the report."
+
+prompt:
+  # incremental: the prompt is assembled aspect by aspect, each one numbered and
+  #              followed by its textual description.
+  # names_only:  aspects are listed by key only (no descriptions).
+  mode: "incremental"
+  teacher_system: "You are an expert radiologist. You answer only with valid JSON."
+  teacher_use_report: true       # also show the original report text to the teacher
+  teacher_task: >-
+    Study the chest X-ray image(s) {view_hint}and the reference report below, then write
+    one summary for each of the following aspects.
+  teacher_report_header: "Reference report:"
+  student_task: >-
+    Look at the chest X-ray image(s) and write the summary for the following aspect(s).
+
+# Hybrid-data generation (teacher inference). Teacher model = configs/models/<name>.yaml.
+augmentation:
+  limit: null                    # debug: only process the first N studies

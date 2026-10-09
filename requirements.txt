@@ -1,0 +1,3 @@
+# Installs the package in editable mode with every optional group.
+# Light-only install (config + data pipeline): pip install -e .
+-e .[all]

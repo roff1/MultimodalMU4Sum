@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mu4sum"
+version = "0.1.0"
+description = "Multimodal aspect-based summarization and machine unlearning (extends MU4Sum)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "omegaconf>=2.3",
+    "numpy",
+    "pandas",
+    "pillow",
+    "datasets",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+download = ["kagglehub"]
+train = ["torch", "transformers>=4.45", "peft", "accelerate", "bitsandbytes; platform_system != 'Darwin'"]
+eval = ["sacrebleu", "rouge-score", "bert-score"]
+dev = ["pytest"]
+all = ["mu4sum[download,train,eval,dev]"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

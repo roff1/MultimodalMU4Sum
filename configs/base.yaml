@@ -1,0 +1,13 @@
+# Always loaded first. Operation-independent defaults.
+seed: 42
+deterministic: true
+
+# Hardware / environment decoupling. Anything left null is resolved at runtime
+# (see mu4sum.utils.environment): env vars MU4SUM_DATA_ROOT / MU4SUM_OUTPUT_ROOT win,
+# then Colab (Google Drive if mounted) / Kaggle (/kaggle/working) / local (repo root).
+# This whole section is excluded from the config fingerprint, so a run started
+# locally can be resumed on Colab without tripping the immutability check.
+runtime:
+  environment: AUTO        # AUTO | LOCAL | COLAB | KAGGLE
+  data_root: null
+  output_root: null
