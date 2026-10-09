@@ -2,9 +2,8 @@ unlearning:
   method: "grad_diff"       # key in mu4sum.unlearning.methods.UNLEARNING_METHODS
   # loss = -forget_nll + alpha * retain_nll
   alpha: 1.0
-  forget:
-    aspects: ["impression"]   # aspects to forget; every other aspect is the retain set
-  batch_size: 4             # per side: each micro-batch holds batch_size forget + batch_size retain samples
+  # forget/retain aspects come from the dataset preset (`forget_aspects`)
+  batch_size: 4            # per side: each micro-batch holds batch_size forget + batch_size retain samples
   grad_accum_steps: 2
   epochs: 1
   lr: 1.0e-5

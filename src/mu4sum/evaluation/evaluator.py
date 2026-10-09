@@ -5,7 +5,7 @@ from omegaconf import DictConfig
 
 from mu4sum.config import save_run_config
 from mu4sum.config.paths import checkpoints_dir, eval_dir, run_dir
-from mu4sum.data.datasets import AspectDataset, load_hybrid
+from mu4sum.data.datasets import AspectDataset, load_hybrid, split_aspects
 from mu4sum.evaluation.metrics import compute_all, unlearning_summary
 from mu4sum.models.chat import processor_inputs, render_prompt
 from mu4sum.models.loader import load_model, load_processor
@@ -77,7 +77,7 @@ def run_evaluate(cfg: DictConfig) -> dict:
     else:
         print(f"[Evaluate] Reusing predictions in {pred_path}")
 
-    forget = list(cfg.unlearning.forget.aspects) if cfg.get("unlearning") else []
+    forget = split_aspects(cfg)[0] if cfg.get("unlearning") else []
     metrics = compute_all(list(read_jsonl(pred_path)), list(cfg.evaluation.metrics), cfg.evaluation, forget)
 
     baseline_path = eval_dir(cfg, "finetune", cfg.run.finetune_tag) / METRICS_FILE

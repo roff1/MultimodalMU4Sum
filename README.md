@@ -25,7 +25,7 @@ python scripts/run_data_pipeline.py --dataset iu_xray --model qwen2_vl_7b --stag
 # 2. LoRA fine-tuning on all aspects
 python scripts/run_finetune.py --model qwen2_vl_7b --dataset iu_xray finetune.lr=1e-4
 
-# 3. unlearning (forget aspects defined in the preset, e.g. unlearning.forget.aspects=[impression])
+# 3. unlearning (forget aspects are defined by the dataset preset, e.g. forget_aspects=[impression])
 python scripts/run_unlearn.py --model qwen2_vl_7b --dataset iu_xray --method grad_diff --tag a0.5 unlearning.alpha=0.5
 
 # 4. evaluation, per aspect (+ overall / forget / retain groups)
@@ -43,9 +43,9 @@ Stages skip themselves when their artifacts exist and are fresh. If the config t
 ```
 base.yaml            seed, determinism, runtime (environment / data_root / output_root)
 models/*.yaml        HF model id, auto_class, dtype, quantization, processor kwargs, teacher generation + retry params
-datasets/*.yaml      source, processor, columns, aspects (+ descriptions), prompt, splits, augmentation
+datasets/*.yaml      source, processor, columns, aspects (+ descriptions), forget_aspects, prompt, splits, augmentation
 finetune/*.yaml      training + LoRA hyper-parameters
-unlearning/*.yaml    method, alpha, forget aspects, training hyper-parameters
+unlearning/*.yaml    method, alpha, training hyper-parameters (forget/retain aspects come from the dataset)
 evaluation/*.yaml    split, metrics, generation settings
 ```
 
@@ -56,22 +56,37 @@ Outputs are organised hierarchically: `outputs/<model>/<dataset>/<method>[/<tag>
 
 ### Aspect prompts
 
-Aspects live in the dataset YAML:
+Aspects, forget set and prompts live in the dataset YAML; no code refers to a specific dataset or aspect:
 
 ```yaml
 aspects:
   names: [heart_and_mediastinum, lungs_and_pleura, bones_soft_tissue_and_devices, impression]
-  descriptions: {impression: "..."}
+  descriptions: {impression: "..."}      # also used as the placeholder of each aspect in the teacher JSON
+forget_aspects: [impression]             # unlearning forgets these, retains every other aspect
 prompt:
-  mode: incremental      # "Aspect i/N: name" + description; `names_only` lists names only
+  mode: incremental                      # show aspect descriptions; `names_only` gives names only
+  teacher_system: "..."
+  teacher_intro: |-                      # role, task, dataset-specific guidance
+    ... {image_info} ... '{source_text}' ...
+  expansion: {enabled: true, description: "..."}
+  student_task: "..."
 ```
 
-The teacher must answer with a JSON object holding one string per aspect. Invalid output triggers up to `generation.max_retries` retries with temperature `min(base_temperature + k * temperature_step, max_temperature)`. Studies that never validate are written to `failures.jsonl` and excluded.
+The teacher prompt has the same shape for every dataset: `teacher_intro` + generic output rules + a JSON template.
+`{image_info}` is built per study from its images ("Image 1 (Frontal) and Image 2 (Lateral)"); `{source_text}` is the dataset text of the study and is only shown if the placeholder is present. The teacher answers with
+
+```json
+{"expanded_text": "...", "aspect_summaries": {"<aspect>": "...", "...": "..."}}
+```
+
+`expanded_text` is requested (and stored in the hybrid records, not used for training) only if `prompt.expansion.enabled`. Invalid output triggers up to `generation.max_retries` retries with temperature `min(base_temperature + k * temperature_step, max_temperature)`. Studies that never validate are written to `failures.jsonl` and excluded.
+
+`forget_aspects` sits outside `aspects` on purpose: it is not part of the artifact fingerprint, so changing it never invalidates the teacher data (it does change the config snapshot of unlearn runs, so use `--tag` for a different forget set).
 
 ## Extending without touching the code
 
 - **New VLM**: copy `configs/models/qwen2_vl_7b.yaml`, change `model.name` (and `auto_class` / LoRA `target_modules` if needed).
-- **New dataset with the same shape** (CSV grouped by study): copy `configs/datasets/iu_xray.yaml`, set `source`, `columns`, `aspects`.
+- **New dataset with the same shape** (CSV grouped by study): copy `configs/datasets/iu_xray.yaml`, set `source`, `columns`, `aspects`, `forget_aspects` and the `prompt` texts.
 - **New source / format / unlearning method / metric**: add a function decorated with `@DOWNLOADERS.register("x")`, `@PROCESSORS.register("x")`, `@UNLEARNING_METHODS.register("x")` or `@METRICS.register("x")`, then reference its name from YAML.
 
 ## Reproducibility

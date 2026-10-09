@@ -50,17 +50,32 @@ aspects:
     bones_soft_tissue_and_devices: "Concise synthesis of bones, soft tissues, and devices."
     impression: "A one-sentence diagnostic summary directly derived from the report."
 
+# Aspects the unlearning experiments forget; every other aspect is retained. Kept outside
+# `aspects` on purpose: changing it must not invalidate the teacher-generated data.
+forget_aspects: ["impression"]
+
 prompt:
-  # incremental: the prompt is assembled aspect by aspect, each one numbered and
-  #              followed by its textual description.
-  # names_only:  aspects are listed by key only (no descriptions).
+  # incremental: aspect descriptions are shown to the models (student prompt: "Aspect i/N: name" +
+  #              description; teacher JSON template: the description as placeholder value).
+  # names_only:  aspects are given by key only (no descriptions).
   mode: "incremental"
   teacher_system: "You are an expert radiologist. You answer only with valid JSON."
-  teacher_use_report: true       # also show the original report text to the teacher
-  teacher_task: >-
-    Study the chest X-ray image(s) {view_hint}and the reference report below, then write
-    one summary for each of the following aspects.
-  teacher_report_header: "Reference report:"
+  # Teacher prompt = teacher_intro + generic output rules + JSON template built from `aspects`
+  # (and `expansion`). Placeholders available in teacher_intro:
+  #   {image_info}  -> built per study from the number/views of its images, e.g. "Image 1 (Frontal) and Image 2 (Lateral)"
+  #   {source_text} -> the dataset text of the study (leave the placeholder out to not show it to the teacher)
+  teacher_intro: |-
+    You are provided with the following chest X-ray image(s): {image_info}, along with the official clinical report: '{source_text}'.
+
+    Your task is to analyze both the images and the text to generate a comprehensive, highly detailed, and dense textual profile, synthesizing the visual evidence with the textual ground truth.
+
+    VISUAL-TEXTUAL GROUNDING: Your output must be fully supported by the images and compatible with the official report. You should describe objective visual elements present in the X-rays even if they are omitted in the short text report, as long as they do not contradict the report. Do not invent external medical history, symptoms, or the patient's sex.
+
+    TERMINOLOGY & EXAMPLES: When describing findings, leverage precise spatial locations (e.g., 'right lower lobe', 'retrocardiac space', 'costophrenic angle'), visual characteristics (e.g., 'patchy opacity', 'increased density', 'blunting', 'radiolucency'), and objective hardware or medical devices (e.g., pacemakers or tubes) to ensure maximum clinical richness.
+  # Also ask the teacher to expand the dataset text; stored in the hybrid records as `expanded_text`.
+  expansion:
+    enabled: true
+    description: "Write a fluent, dense descriptive paragraph of 70-90 words synthesizing the visual findings and the official report, detailing anatomical structures, spatial positions, and medical devices without fabricating external history or patient sex"
   student_task: >-
     Look at the chest X-ray image(s) and write the summary for the following aspect(s).
 

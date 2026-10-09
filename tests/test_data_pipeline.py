@@ -6,6 +6,7 @@ import pytest
 from mu4sum.config.paths import hybrid_dir, processed_dir, raw_dir
 from mu4sum.data.datasets import AspectDataset, load_hybrid, split_aspects
 from mu4sum.data.pipeline import StaleArtifactError, run_data_pipeline
+from mu4sum.data.prompts import ASPECT_SUMMARIES_KEY, EXPANDED_TEXT_KEY, expansion_enabled
 from mu4sum.utils.io import read_jsonl
 
 
@@ -14,12 +15,16 @@ class FakeTeacher:
 
     def __init__(self, cfg, garbage_for_studies=()):
         self.keys, self.calls, self.garbage = list(cfg.aspects.names), 0, set(garbage_for_studies)
+        self.expand = expansion_enabled(cfg)
 
     def generate(self, images, system, prompt, *, temperature, top_p, max_new_tokens):
         self.calls += 1
         if any(f"study {s}." in prompt for s in self.garbage):
             return "not json"
-        return json.dumps({k: f"summary of {k} ({len(images)} imgs)" for k in self.keys})
+        out = {ASPECT_SUMMARIES_KEY: {k: f"summary of {k} ({len(images)} imgs)" for k in self.keys}}
+        if self.expand:
+            out[EXPANDED_TEXT_KEY] = f"expanded text ({len(images)} imgs)"
+        return json.dumps(out)
 
 
 def test_full_pipeline_groups_views_and_splits_by_study(make_cfg):
@@ -44,6 +49,7 @@ def test_full_pipeline_groups_views_and_splits_by_study(make_cfg):
     record = splits["train"][0]
     assert record["aspects"] == list(cfg.aspects.names)
     assert len(record["aspect_summaries"]) == 4
+    assert record[EXPANDED_TEXT_KEY].startswith("expanded text")
     assert "Aspect 4/4: impression" in record["prompt"]
     assert not any(p.startswith("/") for p in record["image_paths"])  # relative paths
     assert (image_root / record["image_paths"][0]).exists()
@@ -143,8 +149,34 @@ def test_aspect_dataset_expands_study_aspect_pairs(make_cfg):
 
 def test_split_aspects_validation(make_cfg):
     with pytest.raises(ValueError, match="not in dataset aspects"):
-        split_aspects(make_cfg("unlearn", unlearning="grad_diff", overrides=["unlearning.forget.aspects=[nope]"]))
+        split_aspects(make_cfg("unlearn", unlearning="grad_diff", overrides=["forget_aspects=[nope]"]))
     with pytest.raises(ValueError, match="at least one"):
         split_aspects(make_cfg("unlearn", unlearning="grad_diff", overrides=[
-            "unlearning.forget.aspects=[heart_and_mediastinum,lungs_and_pleura,"
-            "bones_soft_tissue_and_devices,impression]"]))
+            "forget_aspects=[heart_and_mediastinum,lungs_and_pleura,bones_soft_tissue_and_devices,impression]"]))
+    with pytest.raises(ValueError, match="at least one"):
+        split_aspects(make_cfg("unlearn", unlearning="grad_diff", overrides=["forget_aspects=[]"]))
+
+
+def test_forget_aspects_belong_to_the_dataset_not_to_the_method(make_cfg):
+    for method in ("grad_diff", "grad_ascent"):
+        assert "forget" not in make_cfg("unlearn", unlearning=method).unlearning
+        assert split_aspects(make_cfg("unlearn", unlearning=method))[0] == ["impression"]
+    cfg = make_cfg("unlearn", unlearning="grad_ascent", overrides=["forget_aspects=[lungs_and_pleura]"])
+    forget, retain = split_aspects(cfg)
+    assert forget == ["lungs_and_pleura"] and "lungs_and_pleura" not in retain and len(retain) == 3
+
+
+def test_changing_forget_aspects_does_not_invalidate_hybrid_data(make_cfg):
+    cfg = make_cfg()
+    run_data_pipeline(cfg, backend=FakeTeacher(cfg))
+    other = make_cfg(overrides=["forget_aspects=[lungs_and_pleura]"])
+    teacher = FakeTeacher(other)
+    run_data_pipeline(other, backend=teacher)
+    assert teacher.calls == 0
+
+
+def test_expansion_disabled_stores_no_expanded_text(make_cfg):
+    cfg = make_cfg(overrides=["prompt.expansion.enabled=false"])
+    run_data_pipeline(cfg, backend=FakeTeacher(cfg))
+    splits, _ = load_hybrid(cfg)
+    assert EXPANDED_TEXT_KEY not in splits["train"].column_names

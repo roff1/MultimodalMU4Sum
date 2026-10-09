@@ -51,14 +51,14 @@ def run_unlearn(cfg: DictConfig) -> Path:
                                 f"(or point --finetune-tag at the right run).")
     ucfg = cfg.unlearning
     method = UNLEARNING_METHODS.get(ucfg.method)(ucfg)
+    forget_aspects, retain_aspects = split_aspects(cfg)
     write_json_atomic(out / "lineage.json", {
         "starts_from": str(start),
         "finetune_config_fingerprint": (read_json(parent / "provenance_finetune.json")["config_fingerprint"]
                                         if (parent / "provenance_finetune.json").exists() else None),
-        "forget_aspects": list(ucfg.forget.aspects),
+        "forget_aspects": forget_aspects,
     })
 
-    forget_aspects, retain_aspects = split_aspects(cfg)
     splits, image_root = load_hybrid(cfg)
     forget = AspectDataset(splits["train"], image_root, cfg, aspects=forget_aspects)
     retain = AspectDataset(splits["train"], image_root, cfg, aspects=retain_aspects) if method.needs_retain else None

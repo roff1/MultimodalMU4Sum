@@ -1,5 +1,5 @@
 """Command-line entry points. Every script takes the minimum (model, dataset, ...) plus free-form
-`key=value` overrides of any config value, e.g.:  finetune.lr=1e-4  unlearning.forget.aspects=[impression]
+`key=value` overrides of any config value, e.g.:  finetune.lr=1e-4  forget_aspects=[impression]
 """
 import argparse
 from typing import List, Optional
@@ -81,7 +81,7 @@ def evaluate_main(argv=None) -> None:
     p.add_argument("--target", default="finetune",
                    help="'base', 'finetune' or the name of an unlearning preset whose model to score")
     p.add_argument("--unlearning", default=None, choices=available_presets("unlearning"),
-                   help="Unlearning preset defining forget/retain aspects (implied when --target is a method)")
+                   help="Unlearning preset: adds forget/retain metric groups, with aspects from the dataset preset (implied when --target is a method)")
     p.add_argument("--eval", default=None, choices=available_presets("evaluation"), help="Evaluation preset")
     p.add_argument("--eval-tag", default=None, help="Output sub-folder name (default: the evaluation preset)")
     p.add_argument("--finetune-tag", default=None, help="Tag of the fine-tuning run used as baseline")

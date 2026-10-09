@@ -1,8 +1,7 @@
 unlearning:
   method: "grad_ascent"     # loss = -forget_nll (retain set unused)
   alpha: 0.0
-  forget:
-    aspects: ["impression"]
+  # forget/retain aspects come from the dataset preset (`forget_aspects`)
   batch_size: 4
   grad_accum_steps: 2
   epochs: 1

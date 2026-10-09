@@ -85,7 +85,7 @@ def load_config(
     """Build the fully-resolved, read-only config for one operation.
 
     eval_target: which trained artifact `evaluate` scores: "base", "finetune" (default) or an
-        unlearning method name (`unlearning` is then loaded too, for its forget-aspect definition).
+        unlearning method name (`unlearning` is then loaded too, to enable the forget/retain metric groups).
     tag: sub-folder to keep several runs of the same method (e.g. a hyper-parameter sweep).
     """
     if operation not in OPERATIONS:
