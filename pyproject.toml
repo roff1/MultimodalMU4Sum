@@ -20,7 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 download = ["kagglehub"]
 train = ["torch", "transformers>=4.45", "peft", "accelerate", "bitsandbytes; platform_system != 'Darwin'"]
-eval = ["sacrebleu", "rouge-score", "bert-score"]
+eval = ["sacrebleu", "rouge-score", "bert-score", "scipy"]
 dev = ["pytest"]
 all = ["mu4sum[download,train,eval,dev]"]
 

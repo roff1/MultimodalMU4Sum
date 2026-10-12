@@ -1,0 +1,19 @@
+# Token-wise GA&GD (MU4Sum's contribution): one pass over the answer of every study (all aspects); the tokens
+# of the forget-aspect blocks are ascended (weight -beta), all the others descended (weight alpha).
+# MU4Sum: 1 epoch, lr 7e-5, alpha = beta = 1.
+training:
+  method: "tw_ga_gd"        # loss per sample = sum_t w_t * nll_t / n_tokens
+  alpha: 1.0
+  beta: 1.0
+  epochs: 1
+  batch_size: 2
+  grad_accum_steps: 1
+  lr: 7.0e-5
+  weight_decay: 0.0
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  num_workers: 2
+  bf16: true
+  save_steps: 200           # optimizer steps between checkpoints (final one is always saved)
+  log_steps: 10
+  keep_last_checkpoints: 2

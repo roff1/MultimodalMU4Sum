@@ -6,7 +6,7 @@ dataset:
     type: "kaggle"
     handle: "masrursabab/iu-chest-x-rays-cleaned"
 
-  # Processor registered in mu4sum.data.processors.PROCESSORS.
+  # Processor registered in mu4sum.preprocessing.processors.PROCESSORS.
   # "grouped_csv": one CSV row per image, rows grouped by study id into a single
   # record holding a variable number of images (e.g. frontal + lateral views).
   processor: "grouped_csv"
@@ -37,7 +37,7 @@ dataset:
     test: 0.1
 
 # Aspects and their descriptions. They drive both the teacher prompt (hybrid data
-# generation) and the student prompts (fine-tuning / unlearning / evaluation).
+# generation) and the student prompts (training / evaluation).
 aspects:
   names:
     - "heart_and_mediastinum"

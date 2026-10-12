@@ -21,22 +21,16 @@ def shuffled_plan(n: int, batch_size: int, seed: int) -> PlanFn:
     return plan
 
 
-def paired_plan(n_forget: int, n_retain: int, batch_size: int, seed: int) -> PlanFn:
-    """Each batch = `batch_size` forget samples + `batch_size` retain samples (retain cycles if shorter).
+def mixed_plan(n_forget: int, n_retain: int, batch_size: int, seed: int) -> PlanFn:
+    """Each epoch is a shuffled union of the forget and retain samples, split into batches of `batch_size`.
     Indices are ("forget"|"retain", i) tuples; `n_retain == 0` yields forget-only batches."""
 
     def plan(epoch: int) -> List[list]:
-        """Return the paired forget/retain batches for the given epoch."""
-        rs =np.random.RandomState(seed + epoch)
-        forget_perm = rs.permutation(n_forget).tolist()
-        retain_perm = rs.permutation(n_retain).tolist() if n_retain else []
-        batches = []
-        for b, start in enumerate(range(0, n_forget, batch_size)):
-            batch = [("forget", i) for i in forget_perm[start:start + batch_size]]
-            if retain_perm:
-                batch += [("retain", retain_perm[(b * batch_size + j) % n_retain]) for j in range(batch_size)]
-            batches.append(batch)
-        return batches
+        """Return the mixed forget/retain batches for the given epoch."""
+        keys = [("forget", i) for i in range(n_forget)] + [("retain", i) for i in range(n_retain)]
+        order = np.random.RandomState(seed + epoch).permutation(len(keys)).tolist()
+        keys = [keys[i] for i in order]
+        return [keys[i:i + batch_size] for i in range(0, len(keys), batch_size)]
 
     return plan
 
@@ -61,13 +55,13 @@ class EpochBatchSampler:
 
 
 class PairedDataset:
-    """Serves ("forget"|"retain", i) keys produced by `paired_plan`."""
+    """Serves ("forget"|"retain", i) keys produced by `mixed_plan`."""
 
     def __init__(self, forget, retain=None):
         self.forget, self.retain = forget, retain
 
     def __len__(self) -> int:
-        return len(self.forget)
+        return len(self.forget) + (len(self.retain) if self.retain is not None else 0)
 
     def __getitem__(self, key):
         """Return the forget or retain sample for the key, tagged with its side under "_side"."""

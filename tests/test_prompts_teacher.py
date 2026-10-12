@@ -3,9 +3,9 @@ import json
 import pytest
 from omegaconf import OmegaConf
 
-from mu4sum.data.prompts import (ASPECT_SUMMARIES_KEY, EXPANDED_TEXT_KEY, build_student_prompt,
+from mu4sum.preprocessing.prompts import (ASPECT_SUMMARIES_KEY, EXPANDED_TEXT_KEY, build_student_prompt,
                                  build_teacher_prompt, describe_images)
-from mu4sum.data.teacher import (TeacherFailure, attempt_temperature, generate_aspect_summaries,
+from mu4sum.preprocessing.teacher import (TeacherFailure, attempt_temperature, generate_aspect_summaries,
                                  parse_teacher_json)
 
 KEYS = ["a", "b"]

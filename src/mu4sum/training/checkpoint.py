@@ -3,17 +3,21 @@ weights, optimizer, LR scheduler, progress counters and all RNG states.
 
 Layout under <run_dir>/checkpoints/:
     step-0000200/    periodic resumable checkpoints (adapter + trainer_state.pt), last N kept
+    best/            adapter with the lowest validation loss so far + best.json {step, eval_loss}
     final/           the finished model (adapter only) + DONE marker; this is what the next stage loads
+                     (the best adapter when validation ran, else the last one)
 """
 import os
 import shutil
 from pathlib import Path
 from typing import Optional
 
+from mu4sum.utils.io import read_json, write_json_atomic
 from mu4sum.utils.reproducibility import get_rng_state, set_rng_state
 
 STATE_FILE = "trainer_state.pt"
 DONE_MARKER = "DONE"
+BEST_FILE = "best.json"
 
 
 class PeftCheckpointIO:
@@ -99,4 +103,32 @@ def save_final(root: Path, model, io) -> Path:
     path.mkdir(parents=True)
     io.save(model, path)
     (path / DONE_MARKER).write_text("ok")
+    return path
+
+
+def best_checkpoint(root: Path) -> Optional[Path]:
+    """Return the `best` adapter dir if one was saved, else None."""
+    path = Path(root) / "best"
+    return path if (path / BEST_FILE).exists() else None
+
+
+def load_best_info(root: Path) -> Optional[dict]:
+    """{"step", "eval_loss"} of the best checkpoint, or None when there is none yet."""
+    path = best_checkpoint(root)
+    return read_json(path / BEST_FILE) if path else None
+
+
+def save_best(root: Path, step: int, eval_loss: float, model, io) -> Path:
+    """Atomically replace <root>/best with the current adapter and its validation record."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    path, tmp = root / "best", root / ".tmp-best"
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir()
+    io.save(model, tmp)
+    write_json_atomic(tmp / BEST_FILE, {"step": step, "eval_loss": eval_loss})
+    if path.exists():
+        shutil.rmtree(path)
+    os.replace(tmp, path)
     return path

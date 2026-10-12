@@ -1,0 +1,19 @@
+# Default: the Original adapter fine-tuned on the forget aspects only, with every target summary replaced
+# by the refusal text. MU4Sum: 100 steps.
+training:
+  method: "default"
+  refusal_text: "I can't assist you on this"
+  max_steps: 100            # overrides epochs
+  epochs: 1
+  eval_steps: 20            # validation every N steps (0 = every epoch end)
+  batch_size: 2
+  grad_accum_steps: 1
+  lr: 7.0e-5
+  weight_decay: 0.0
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  num_workers: 2
+  bf16: true
+  save_steps: 200           # optimizer steps between checkpoints (final one is always saved)
+  log_steps: 10
+  keep_last_checkpoints: 2

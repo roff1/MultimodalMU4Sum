@@ -21,3 +21,12 @@ generation:
   temperature_step: 0.3   # attempt k uses min(base + k * step, max_temperature)
   max_temperature: 1.0
   top_p: 0.9
+
+# LoRA adapter trained by `original` / `retrain` (MU4Sum: r=8, alpha=16, dropout=0.05 on all linear layers +
+# lm_head). Module names depend on the architecture, so they live with the model; override with `lora.r=4`.
+# Top-level on purpose: it is not part of the teacher-data fingerprint (only `model` and `generation` are).
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]

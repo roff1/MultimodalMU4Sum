@@ -3,7 +3,7 @@ from typing import Callable, Dict
 
 
 class Registry:
-    """Name -> callable map used to plug in processors, downloaders, metrics, unlearning methods."""
+    """Name -> callable map used to plug in processors, downloaders, metrics, training methods."""
 
     def __init__(self, kind: str):
         self.kind = kind

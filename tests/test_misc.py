@@ -3,7 +3,7 @@ import stat
 import pytest
 from omegaconf import OmegaConf
 
-from mu4sum.evaluation.metrics import METRICS, compute_all, unlearning_summary
+from mu4sum.evaluation.metrics import METRICS, score_rows, summarize, unlearning_summary
 from mu4sum.utils.environment import resolve_runtime
 from mu4sum.utils.registry import Registry
 from mu4sum.utils.sync import sync_artifacts
@@ -11,23 +11,65 @@ from mu4sum.utils.sync import sync_artifacts
 
 @METRICS.register("exact_match")
 def exact_match(preds, refs, cfg):
-    return {"exact_match": sum(p == r for p, r in zip(preds, refs)) / len(preds)}
+    exact_match.calls.append(len(preds))
+    return {"exact_match": [float(p == r) for p, r in zip(preds, refs)]}
 
 
-def test_metrics_per_aspect_and_forget_retain_groups():
-    rows = [
-        {"aspect": "impression", "prediction": "a", "reference": "a"},
-        {"aspect": "impression", "prediction": "a", "reference": "b"},
-        {"aspect": "lungs", "prediction": "c", "reference": "c"},
-    ]
-    out = compute_all(rows, ["exact_match"], OmegaConf.create({}), forget_aspects=["impression"])
-    assert out["overall"]["exact_match"] == pytest.approx(2 / 3)
-    assert out["aspect/impression"]["exact_match"] == 0.5 and out["aspect/lungs"]["n"] == 1
-    assert out["forget"]["n"] == 2 and out["retain"]["exact_match"] == 1.0
+exact_match.calls = []
 
-    base = {"forget": {"exact_match": 1.0}, "retain": {"exact_match": 1.0}}
-    summary = unlearning_summary(out, base, "exact_match")
-    assert summary == {"forget_exact_match_retention": 0.5, "retain_exact_match_retention": 1.0}
+
+def row(study, view, aspects, prediction, summaries):
+    from mu4sum.preprocessing.answers import format_answer
+
+    return {"study_id": study, "view": view, "aspects": aspects, "prediction": prediction,
+            "references": summaries, "reference": format_answer(summaries, aspects)[0]}
+
+
+ROWS = [
+    row(1, "forget", ["impression"], "impression\nfoo", {"impression": "foo"}),
+    row(2, "forget", ["impression"], "impression\nbar", {"impression": "foo"}),
+    row(3, "forget", ["impression"], "", {"impression": "foo"}),
+    row(1, "retain", ["lungs", "heart"], "lungs\nL\n\nheart\nH", {"lungs": "L", "heart": "H"}),
+    row(2, "retain", ["lungs", "heart"], "lungs\nL", {"lungs": "L", "heart": "H"}),
+]
+
+
+def test_per_sample_scores_at_full_aspect_and_per_aspect_levels():
+    exact_match.calls.clear()
+    scores = score_rows(ROWS, ["exact_match"], OmegaConf.create({}))
+    assert scores["forget/full"] == {"1": {"exact_match": 1.0}, "2": {"exact_match": 0.0}, "3": {"exact_match": 0.0}}
+    assert scores["forget/aspect"]["1"]["exact_match"] == 1.0 and scores["forget/aspect"]["3"]["exact_match"] == 0.0
+    assert scores["retain/full"]["1"]["exact_match"] == 1.0 and scores["retain/full"]["2"]["exact_match"] == 0.0
+    assert scores["retain/aspect"] == {"1": {"exact_match": 1.0}, "2": {"exact_match": 0.5}}  # missing aspect = 0
+    assert scores["aspect/heart"]["2"]["exact_match"] == 0.0 and scores["aspect/lungs"]["2"]["exact_match"] == 1.0
+    assert sum(exact_match.calls) == 12 - 3  # 12 pairs, 3 with an empty prediction skip the metric
+
+    out = summarize(scores)
+    assert out["forget/full"] == {"n": 3, "exact_match": pytest.approx(100 / 3)}
+    assert out["retain/aspect"]["exact_match"] == pytest.approx(75.0) and out["aspect/lungs"]["n"] == 2
+
+
+def test_unlearning_summary_is_the_retention_of_the_baseline_score():
+    current = {"forget/full": {"n": 3, "exact_match": 10.0}, "retain/full": {"n": 3, "exact_match": 80.0},
+               "forget/aspect": {"n": 3, "exact_match": 0.0}}
+    baseline = {"forget/full": {"n": 3, "exact_match": 80.0}, "retain/full": {"n": 3, "exact_match": 80.0},
+                "forget/aspect": {"n": 3, "exact_match": 50.0}, "retain/aspect": {"n": 3, "exact_match": 50.0}}
+    assert unlearning_summary(current, baseline) == {"forget_full_exact_match_retention": 0.125,
+                                                     "retain_full_exact_match_retention": 1.0,
+                                                     "forget_aspect_exact_match_retention": 0.0}
+
+
+def test_paired_ttest_on_per_sample_scores():
+    pytest.importorskip("scipy")
+    from mu4sum.evaluation.significance import paired_ttest
+
+    base = {"g": {str(i): {"m": 0.5 + 0.01 * (i % 3)} for i in range(10)}}
+    better = {"g": {str(i): {"m": 0.7 + 0.01 * (i % 3) + 0.001 * i} for i in range(10)}}
+    out = paired_ttest(better, base)["g"]["m"]
+    assert out["n"] == 10 and out["mean_diff"] == pytest.approx(20.45) and out["p"] < 1e-6
+    same = paired_ttest(base, base)["g"]["m"]
+    assert same["p"] == 1.0 and same["mean_diff"] == 0.0
+    assert paired_ttest({"g": {"1": {"m": 1.0}}}, {"g": {"1": {"m": 0.0}}}) == {}  # fewer than 2 shared studies
 
 
 def test_registry_errors_and_duplicates():

@@ -1,0 +1,18 @@
+# Token-wise GA&KD (MU4Sum's contribution): the tokens of the forget-aspect blocks are ascended (-beta * NLL),
+# all the others are distilled towards the Original model (alpha * KL). MU4Sum: 1 epoch, lr 7e-5, alpha = beta = 1.
+training:
+  method: "tw_ga_kd"        # loss per sample = sum_t (-beta * nll_t | alpha * kl_t) / n_tokens
+  alpha: 1.0
+  beta: 1.0
+  epochs: 1
+  batch_size: 2
+  grad_accum_steps: 1
+  lr: 7.0e-5
+  weight_decay: 0.0
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  num_workers: 2
+  bf16: true
+  save_steps: 200           # optimizer steps between checkpoints (final one is always saved)
+  log_steps: 10
+  keep_last_checkpoints: 2

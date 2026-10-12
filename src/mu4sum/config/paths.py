@@ -19,21 +19,25 @@ def processed_dir(cfg: DictConfig) -> Path:
 
 
 def hybrid_dir(cfg: DictConfig) -> Path:
-    """Teacher-generated aspect summaries (one folder per teacher preset)."""
-    return processed_dir(cfg) / f"hybrid__{_slug(cfg.run.model)}"
+    """Teacher-generated aspect summaries (one folder per teacher preset, whatever student uses them)."""
+    return processed_dir(cfg) / f"hybrid__{_slug(cfg.run.teacher)}"
 
 
 def run_dir(cfg: DictConfig, method: str = None, tag: str = "__cfg__") -> Path:
-    """outputs/<model>/<dataset>/<method>[/<tag>]"""
+    """outputs/<model>/<dataset>[__teacher-<teacher>]/<method>[/<tag>]; the teacher is named only when it is
+    not the model itself, so runs on data from different teachers never share a folder."""
     method = method or cfg.run.method
     tag = cfg.run.tag if tag == "__cfg__" else tag
-    path = Path(cfg.runtime.output_root) / cfg.run.model / cfg.run.dataset / method
+    dataset = cfg.run.dataset
+    if cfg.run.teacher != cfg.run.model:
+        dataset = f"{dataset}__teacher-{_slug(cfg.run.teacher)}"
+    path = Path(cfg.runtime.output_root) / cfg.run.model / dataset / method
     return path / tag if tag else path
 
 
-def finetune_dir(cfg: DictConfig) -> Path:
-    """Run folder of the fine-tuned model that unlearning starts from."""
-    return run_dir(cfg, "finetune", cfg.run.finetune_tag)
+def original_dir(cfg: DictConfig) -> Path:
+    """Run folder of the Original model that finetune / default / unlearning methods start from."""
+    return run_dir(cfg, "original", cfg.run.original_tag)
 
 
 def checkpoints_dir(directory) -> Path:

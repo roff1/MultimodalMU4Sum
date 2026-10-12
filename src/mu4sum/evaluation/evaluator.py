@@ -1,20 +1,39 @@
-"""Evaluation stage: generate answers for every (study, aspect) of a split, then score per aspect."""
-from pathlib import Path
+"""Evaluation stage: generate multi-aspect answers per view for every study of a split, then score them.
+
+Views: with `forget_aspects` set, every model (pretrained base, original, retrain, unlearned...) is asked once for
+the forget aspects ("forget") and once for the retain aspects ("retain") of each study, exactly the two prompts
+sample-wise unlearning trains on; without it a single "all" view asks for every aspect. Works for every training
+method (and the pretrained `base` model).
+"""
 
 from omegaconf import DictConfig
 
 from mu4sum.config import save_run_config
-from mu4sum.config.paths import checkpoints_dir, eval_dir, run_dir
-from mu4sum.data.datasets import AspectDataset, load_hybrid, split_aspects
-from mu4sum.evaluation.metrics import compute_all, unlearning_summary
+from mu4sum.config.loader import BASE_TARGET
+from mu4sum.config.paths import eval_dir, run_dir
+from mu4sum.evaluation.metrics import score_rows, summarize
 from mu4sum.models.chat import processor_inputs, render_prompt
 from mu4sum.models.loader import load_model, load_processor
-from mu4sum.training.checkpoint import final_checkpoint
-from mu4sum.utils.io import read_json, read_jsonl, write_json_atomic, write_jsonl
+from mu4sum.preprocessing.datasets import StudyDataset, load_hybrid, split_aspects
+from mu4sum.training.run import build_method, model_checkpoint
+from mu4sum.utils.io import read_jsonl, write_json_atomic, write_jsonl
 from mu4sum.utils.reproducibility import seed_worker, set_seed
 
-PREDICTIONS_FILE = "predictions.jsonl"
+EVAL_SPLITS = ("train", "test")  # train = what unlearning acted on, test = generalisation to unseen studies
 METRICS_FILE = "metrics.json"
+
+
+def predictions_file(split: str) -> str:
+    """File name of the predictions of one split inside the evaluation folder."""
+    return f"predictions_{split}.jsonl"
+
+
+def eval_views(cfg: DictConfig) -> dict:
+    """{view name: aspects asked in that view}; None stands for every aspect."""
+    if cfg.get("forget_aspects"):
+        forget, retain = split_aspects(cfg)
+        return {"forget": forget, "retain": retain}
+    return {"all": None}
 
 
 class GenerationCollator:
@@ -28,12 +47,12 @@ class GenerationCollator:
         """Render and tokenize prompts for a batch; return (model inputs, per-sample reference metadata)."""
         texts = [render_prompt(self.processor, s["prompt"], len(s["images"])) for s in samples]
         inputs = processor_inputs(self.processor, texts, [s["images"] for s in samples], self.nested)
-        meta = [{k: s[k] for k in ("study_id", "aspect", "target")} for s in samples]
+        meta = [{k: s[k] for k in ("study_id", "aspects", "references", "target")} for s in samples]
         return inputs, meta
 
 
-def _generate(cfg: DictConfig, model, processor, dataset, out_path: Path) -> None:
-    """Generate a prediction per sample (greedy if temperature is 0) and write them to out_path as JSONL."""
+def _generate(cfg: DictConfig, model, processor, dataset, view: str) -> list:
+    """Generate an answer per study (greedy if temperature is 0) and return them as prediction rows."""
     import torch
     from torch.utils.data import DataLoader
 
@@ -51,41 +70,59 @@ def _generate(cfg: DictConfig, model, processor, dataset, out_path: Path) -> Non
             inputs = inputs.to(device)
             out = model.generate(**inputs, max_new_tokens=int(ev.generation.max_new_tokens), **sampling)
             texts = processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-            rows += [{"study_id": m["study_id"], "aspect": m["aspect"], "reference": m["target"],
-                      "prediction": t.strip()} for m, t in zip(meta, texts)]
-    write_jsonl(out_path, rows)
+            rows += [{"study_id": m["study_id"], "view": view, "aspects": m["aspects"], "reference": m["target"],
+                      "references": m["references"], "prediction": t.strip()} for m, t in zip(meta, texts)]
+    return rows
+
+
+def _cached(path, views: dict) -> bool:
+    """True when `path` holds predictions in the current format for exactly the expected views."""
+    if not path.exists():
+        return False
+    rows = list(read_jsonl(path))
+    ok = bool(rows) and all("view" in r and "references" in r for r in rows) and {r["view"] for r in rows} == set(views)
+    if not ok:
+        print(f"[Evaluate] Ignoring {path}: not in the current (view, multi-aspect) format; regenerating")
+    return ok
 
 
 def run_evaluate(cfg: DictConfig) -> dict:
-    """Generate (or reuse cached) predictions, compute metrics, save metrics.json and return the metrics."""
+    """Generate (or reuse cached) predictions for every split in EVAL_SPLITS and score them.
+
+    Saves metrics.json ({split: {group: {n, metric: mean x100}}}) and returns it."""
     target = cfg.run.method
+    method = None if target == BASE_TARGET else build_method(cfg)
+    views = eval_views(cfg)
     out = eval_dir(cfg)
     save_run_config(cfg, out, "evaluate")
     set_seed(cfg.seed, cfg.deterministic)
 
-    pred_path = out / PREDICTIONS_FILE
-    if not pred_path.exists():
+    missing = [s for s in EVAL_SPLITS if not _cached(out / predictions_file(s), views)]
+    if missing:
         adapter = None
-        if target != "base":
-            adapter = final_checkpoint(checkpoints_dir(run_dir(cfg)))
+        if method:
+            adapter = model_checkpoint(cfg)
             if adapter is None:
-                raise FileNotFoundError(f"No finished '{target}' model in {run_dir(cfg)}; train it first.")
+                raise FileNotFoundError(f"No finished '{target}' model in {run_dir(cfg)}; run "
+                                        f"`scripts/run_train.py --method {target}` first.")
         splits, image_root = load_hybrid(cfg)
-        dataset = AspectDataset(splits[cfg.evaluation.split], image_root, cfg, limit=cfg.evaluation.limit)
-        print(f"[Evaluate] '{target}' on {len(dataset)} (study, aspect) samples of '{cfg.evaluation.split}'")
-        _generate(cfg, load_model(cfg.model, adapter_dir=adapter), load_processor(cfg.model), dataset, pred_path)
-    else:
-        print(f"[Evaluate] Reusing predictions in {pred_path}")
+        model, processor = load_model(cfg.model, adapter_dir=adapter), load_processor(cfg.model)
+        for split in missing:
+            rows = []
+            for view, aspects in views.items():
+                dataset = StudyDataset(splits[split], image_root, cfg, aspects=aspects, limit=cfg.evaluation.limit)
+                print(f"[Evaluate] '{target}' on {len(dataset)} studies of '{split}', view '{view}'")
+                rows += _generate(cfg, model, processor, dataset, view)
+            write_jsonl(out / predictions_file(split), rows)
+    for split in set(EVAL_SPLITS) - set(missing):
+        print(f"[Evaluate] Reusing predictions in {out / predictions_file(split)}")
 
-    forget = split_aspects(cfg)[0] if cfg.get("unlearning") else []
-    metrics = compute_all(list(read_jsonl(pred_path)), list(cfg.evaluation.metrics), cfg.evaluation, forget)
-
-    baseline_path = eval_dir(cfg, "finetune", cfg.run.finetune_tag) / METRICS_FILE
-    if forget and baseline_path.exists():
-        names = [m for m in ("rougeL", "bleu", "bertscore_f1") if m in metrics["overall"]]
-        if names:
-            metrics["unlearning_summary"] = unlearning_summary(metrics, read_json(baseline_path), names[0])
+    names = list(cfg.evaluation.metrics)
+    metrics = {s: summarize(score_rows(list(read_jsonl(out / predictions_file(s))), names, cfg.evaluation))
+               for s in EVAL_SPLITS}
     write_json_atomic(out / METRICS_FILE, metrics)
-    print(f"[Evaluate] overall: {metrics['overall']}")
+    for split in EVAL_SPLITS:
+        print(f"[Evaluate] {split}: " + "; ".join(
+            f"{g}: " + " ".join(f"{k}={v:.2f}" for k, v in m.items() if k != "n") for g, m in metrics[split].items()
+            if not g.startswith("aspect/")))
     return metrics
-

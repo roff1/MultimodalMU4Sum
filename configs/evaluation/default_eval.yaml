@@ -1,15 +1,13 @@
 evaluation:
-  split: "test"
-  metrics:                  # keys in mu4sum.evaluation.metrics.METRICS
-    - "bleu"
+  metrics:                 # keys in mu4sum.evaluation.metrics.METRICS (MU4Sum reports ROUGE and BERTScore)
     - "rouge"
     - "bertscore"
   batch_size: 8
   num_workers: 2
   save_predictions: true
-  limit: null
+  limit: null               # debug: only the first N studies of each split
   generation:
     max_new_tokens: 256
     temperature: 0.0        # 0 = greedy
   bertscore:
-    model_type: "distilbert-base-uncased"
+    model_type: "roberta-large"

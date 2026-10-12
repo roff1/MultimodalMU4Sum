@@ -1,0 +1,19 @@
+# NPO: negative preference optimization on the forget aspects, with the Original model as reference, plus NLL on
+# the retain aspects. MU4Sum: 1 epoch, lr 7e-5, beta 0.1, alpha = gamma = 1.
+training:
+  method: "npo"             # loss = alpha * retain_nll + gamma * mean[-(2/beta) log sigmoid(-beta * log_ratio)]
+  alpha: 1.0
+  beta: 0.1
+  gamma: 1.0
+  epochs: 1
+  batch_size: 2             # samples per batch, forget and retain views mixed
+  grad_accum_steps: 1
+  lr: 7.0e-5
+  weight_decay: 0.0
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  num_workers: 2
+  bf16: true
+  save_steps: 200           # optimizer steps between checkpoints (final one is always saved)
+  log_steps: 10
+  keep_last_checkpoints: 2

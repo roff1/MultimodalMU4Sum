@@ -1,8 +1,9 @@
 """Hierarchical, operation-aware configuration loading.
 
 The user only names presets (model, dataset, ...). Which preset *groups* get merged is
-decided by the operation, so e.g. `preprocess` never needs a model and `unlearn` always
-pulls in an unlearning preset. Groups live in `configs/<dir>/<name>.yaml`.
+decided by the operation (the three pipeline stages: `preprocess`, `train`, `evaluate`), so e.g.
+`preprocess` never needs a model and `train` always pulls in a training-method preset. Groups live in
+`configs/<dir>/<name>.yaml`.
 """
 import re
 from typing import Dict, Iterable, Optional
@@ -17,19 +18,20 @@ CONFIGS_DIR = PROJECT_ROOT / "configs"
 GROUP_DIRS = {
     "dataset": "datasets",
     "model": "models",
-    "finetune": "finetune",
-    "unlearning": "unlearning",
+    "training": "training",
     "evaluation": "evaluation",
 }
 
 # group -> "required" | "optional" | "default:<preset>"
 OPERATIONS: Dict[str, Dict[str, str]] = {
-    "preprocess": {"dataset": "required", "model": "optional"},  # model = teacher (augment stage only)
-    "finetune": {"model": "required", "dataset": "required", "finetune": "default:default"},
-    "unlearn": {"model": "required", "dataset": "required", "unlearning": "required"},
+    "preprocess": {"dataset": "required", "model": "optional"},  # model = the teacher (augment stage only)
+    "train": {"model": "required", "dataset": "required", "training": "required"},  # training = the method
     "evaluate": {"model": "required", "dataset": "required", "evaluation": "default:default_eval",
-                 "unlearning": "optional"},
+                 "training": "default:original"},
 }
+
+# `evaluate` target that scores the pretrained model without any adapter (no training preset is loaded).
+BASE_TARGET = "base"
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -73,29 +75,34 @@ def load_config(
     *,
     model: Optional[str] = None,
     dataset: Optional[str] = None,
-    finetune: Optional[str] = None,
-    unlearning: Optional[str] = None,
+    training: Optional[str] = None,
     evaluation: Optional[str] = None,
-    eval_target: Optional[str] = None,
     tag: Optional[str] = None,
-    finetune_tag: Optional[str] = None,
+    original_tag: Optional[str] = None,
     eval_tag: Optional[str] = None,
+    teacher: Optional[str] = None,
     overrides: Optional[Iterable[str]] = None,
 ) -> DictConfig:
     """Build the fully-resolved, read-only config for one operation.
 
-    eval_target: which trained artifact `evaluate` scores: "base", "finetune" (default) or an
-        unlearning method name (`unlearning` is then loaded too, to enable the forget/retain metric groups).
+    training: the training method preset (original, retrain, finetune, default, ga, ga_gd, ga_kd, npo).
+        For `evaluate` it names the method whose model is scored (default "original"; "base" = no adapter).
     tag: sub-folder to keep several runs of the same method (e.g. a hyper-parameter sweep).
+    original_tag: tag of the `original` run that finetune / default / unlearning methods start from and
+        that evaluations compare against.
+    teacher: model preset that generated the hybrid data (train / evaluate only; defaults to `model`).
+        In `preprocess` the `model` preset is the teacher.
     """
     if operation not in OPERATIONS:
         raise ValueError(f"Unknown operation '{operation}'. Available: {sorted(OPERATIONS)}")
-    requested = {"model": model, "dataset": dataset, "finetune": finetune,
-                 "unlearning": unlearning, "evaluation": evaluation}
+    requested = {"model": model, "dataset": dataset, "training": training, "evaluation": evaluation}
+    base_target = operation == "evaluate" and training == BASE_TARGET
 
     parts = [OmegaConf.load(CONFIGS_DIR / "base.yaml")]
     chosen: Dict[str, str] = {}
     for group, rule in OPERATIONS[operation].items():
+        if base_target and group == "training":
+            continue
         name = requested[group]
         if name is None and rule.startswith("default:"):
             name = rule.split(":", 1)[1]
@@ -107,23 +114,23 @@ def load_config(
         parts.append(_load_preset(group, name))
         chosen[group] = name
 
-    if operation == "preprocess":
-        method = None
-    elif operation == "finetune":
-        method = "finetune"
-    elif operation == "unlearn":
-        method = chosen["unlearning"]
-    else:
-        method = eval_target or chosen.get("unlearning") or "finetune"
+    method = BASE_TARGET if base_target else chosen.get("training")
+    if teacher is not None and operation == "preprocess":
+        raise ValueError("`preprocess` takes the teacher as its model preset (--model); `teacher` is for "
+                         "train / evaluate.")
+    teacher = teacher or chosen.get("model")
+    if teacher is not None and teacher != chosen.get("model"):
+        _load_preset("model", teacher)  # fail early, with the list of available presets
 
     cfg = OmegaConf.merge(*parts)
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"run": {
         "operation": operation,
         "model": chosen.get("model"),
+        "teacher": teacher,
         "dataset": chosen.get("dataset"),
         "method": method,
         "tag": tag,
-        "finetune_tag": finetune_tag,
+        "original_tag": original_tag,
         "eval_tag": eval_tag or chosen.get("evaluation"),
     }}))
     cfg = _apply_overrides(cfg, overrides)
