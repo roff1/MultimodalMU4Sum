@@ -101,7 +101,7 @@ def load_config(
     parts = [OmegaConf.load(CONFIGS_DIR / "base.yaml")]
     chosen: Dict[str, str] = {}
     for group, rule in OPERATIONS[operation].items():
-        if base_target and group == "training":
+        if base_target and group == "training": # No training params needed here (base model, no fine-tuning/unlearning)
             continue
         name = requested[group]
         if name is None and rule.startswith("default:"):
@@ -120,8 +120,7 @@ def load_config(
                          "train / evaluate.")
     teacher = teacher or chosen.get("model")
     if teacher is not None and teacher != chosen.get("model"):
-        _load_preset("model", teacher)  # fail early, with the list of available presets
-
+        _load_preset("model", teacher)  # Fail early if a separate teacher preset doesn't exist.
     cfg = OmegaConf.merge(*parts)
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"run": {
         "operation": operation,

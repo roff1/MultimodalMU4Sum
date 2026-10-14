@@ -3,11 +3,11 @@ seed: 42
 deterministic: true
 
 # Hardware / environment decoupling. Anything left null is resolved at runtime
-# (see mu4sum.utils.environment): env vars MU4SUM_DATA_ROOT / MU4SUM_OUTPUT_ROOT win,
-# then Colab (Google Drive if mounted) / Kaggle (/kaggle/working) / local (repo root).
-# This whole section is excluded from the config fingerprint, so a run started
-# locally can be resumed on Colab without tripping the immutability check.
+# (see mu4sum.utils.environment): env vars MU4SUM_DATA_ROOT / MU4SUM_OUTPUT_ROOT (which 
+# must be set before launching the script) win. Otherwise, the environment is automatically 
+# detected (if set to AUTO) to choose the best defaults: Colab (Google Drive if mounted), 
+# Kaggle (/kaggle/working), or local (repo root).
 runtime:
-  environment: AUTO        # AUTO | LOCAL | COLAB | KAGGLE
-  data_root: null
-  output_root: null
+  environment: AUTO        # AUTO (default) | LOCAL | COLAB | KAGGLE
+  data_root: null        # 
+  output_root: null        # 

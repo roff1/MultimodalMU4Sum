@@ -82,7 +82,7 @@ def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Pat
     fp = fingerprint(OmegaConf.to_container(source))
     marker = raw_dir / SOURCE_FILE
 
-    if marker.exists() and not force:
+    if marker.exists() and not force: # Skip download if files exist and configuration matches (unless forced).
         info = read_json(marker)
         existing = raw_root(raw_dir, data_root)
         if info.get("fingerprint") != fp:
