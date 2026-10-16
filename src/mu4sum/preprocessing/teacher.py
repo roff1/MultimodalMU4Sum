@@ -76,8 +76,6 @@ def generate_aspect_summaries(backend: TeacherBackend, images: list, prompt: str
         temperature = attempt_temperature(gen, attempt)
         raw = backend.generate(images, prompt, temperature=temperature,
                                top_p=float(gen.top_p), max_new_tokens=int(gen.max_new_tokens))
-        print("[ROFF1] prompt", prompt)
-        print("[ROFF1] output", raw)
         try:
             summaries = parse_teacher_json(raw, keys)
         except ValueError as e:

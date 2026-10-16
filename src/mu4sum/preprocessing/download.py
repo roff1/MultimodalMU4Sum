@@ -23,7 +23,6 @@ def _download_kaggle(source: DictConfig, raw_dir: Path) -> Path:
     # Keep the dataset next to our data root instead of ~/.cache (matters on Colab/Drive).
     os.environ.setdefault("KAGGLEHUB_CACHE", str(raw_dir / "_kagglehub"))
     import kagglehub
-    print("[ROFF1] download", raw_dir)
     return Path(kagglehub.dataset_download(source.handle))
 
 
