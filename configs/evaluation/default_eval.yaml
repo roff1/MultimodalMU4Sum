@@ -5,7 +5,7 @@ evaluation:
   batch_size: 8
   num_workers: 2
   save_predictions: true
-  limit: null               # debug: only the first N studies of each split
+  limit: null               # debug: only the first N records of each split
   generation:
     max_new_tokens: 256
     temperature: 0.0        # 0 = greedy

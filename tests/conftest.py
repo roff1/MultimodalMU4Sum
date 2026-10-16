@@ -8,18 +8,17 @@ from mu4sum.config import load_config
 
 @pytest.fixture
 def raw_dataset(tmp_path):
-    """Fake IU-X-ray-like raw folder: 20 studies, some with frontal+lateral views, one image per CSV row."""
-    raw = tmp_path / "source" / "320"
+    """Fake IU-X-ray-like raw folder: 20 records, some with frontal+lateral views, one image per CSV row."""
+    raw = tmp_path / "source" / "resized_images" / "320"
     raw.mkdir(parents=True)
     rows = []
     for i in range(20):
         views = ["Frontal", "Lateral"] if i % 2 == 0 else ["Frontal"]
-        for v in reversed(views):  # reversed on purpose: loader must reorder frontal first
+        for v in views:
             name = f"{i}_{v}.png"
             Image.fromarray(np.full((8, 8), i * 10 % 255, dtype=np.uint8)).save(raw / name)
-            rows.append({"uid": i, "filename": name, "projection": v,
-                         "findings": f"Findings of study {i}. Heart normal. Lungs clear.",
-                         "impression": f"No acute disease {i}."})
+            rows.append({"image_id": name, "projection": v,
+                         "org_caption": f"findings of study {i}. heart normal. lungs clear. no acute disease {i}."})
     pd.DataFrame(rows).to_csv(tmp_path / "source" / "cleaned_dataset.csv", index=False)
     return tmp_path / "source"
 

@@ -7,7 +7,7 @@ from omegaconf import DictConfig
 from mu4sum.config import save_run_config
 from mu4sum.config.paths import checkpoints_dir, original_dir, run_dir
 from mu4sum.models.loader import attach_lora, load_model, load_processor
-from mu4sum.preprocessing.datasets import StudyDataset, load_hybrid, split_aspects
+from mu4sum.preprocessing.datasets import RecordDataset, load_hybrid, split_aspects
 from mu4sum.training.batching import PairedDataset, mixed_plan, shuffled_plan
 from mu4sum.training.checkpoint import final_checkpoint
 from mu4sum.training.collate import PairedCollator, SFTCollator, TokenWiseCollator
@@ -58,20 +58,20 @@ def run_train(cfg: DictConfig) -> Optional[Path]:
     def inputs(split: str):
         """(dataset, collate_fn, batch plan) of this method on one split of the hybrid dataset."""
         def view(aspects, target=None):
-            return StudyDataset(splits[split], image_root, cfg, aspects=aspects, target_override=target)
+            return RecordDataset(splits[split], image_root, cfg, aspects=aspects, target_override=target)
 
         if method.paired:
             forget = view(forget_aspects, method.forget_target)
             retain = view(retain_aspects) if method.needs_retain else None
-            print(f"[Train] {tcfg.method} {split}: forget={forget_aspects} ({len(forget)} studies)"
-                  + (f", retain={retain_aspects} ({len(retain)} studies)" if retain else ""))
+            print(f"[Train] {tcfg.method} {split}: forget={forget_aspects} ({len(forget)} records)"
+                  + (f", retain={retain_aspects} ({len(retain)} records)" if retain else ""))
             return (PairedDataset(forget, retain), PairedCollator(sft),
                     mixed_plan(len(forget), len(retain) if retain else 0, tcfg.batch_size, cfg.seed))
         if method.token_wise:
             dataset, collate = view(None), TokenWiseCollator(sft, forget_aspects)
         else:
             dataset, collate = view(None if method.data == ALL else retain_aspects), sft
-        print(f"[Train] {tcfg.method} {split}: {len(dataset)} studies, aspects={dataset.aspects}")
+        print(f"[Train] {tcfg.method} {split}: {len(dataset)} records, aspects={dataset.aspects}")
         return dataset, collate, shuffled_plan(len(dataset), tcfg.batch_size, cfg.seed)
 
     dataset, collate, plan = inputs("train")

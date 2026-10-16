@@ -9,7 +9,7 @@ A method is a factory `fn(training_cfg) -> TrainingMethod`; register new ones wi
 @TRAINING_METHODS.register("name") and select them with `training.method` in a configs/training preset.
 `step(model, batch, reference)` returns (loss, logs). Standard methods get plain model batches; sample-wise
 unlearning methods get {"forget": model_inputs | None, "retain": model_inputs | None} (two views of the same
-studies, each asking only for its own aspects); token-wise methods get plain batches carrying `token_kind`
+records, each asking only for its own aspects); token-wise methods get plain batches carrying `token_kind`
 (+1 retain token, -1 forget token, 0 not part of the answer). `reference` is the frozen Original model (only
 built when `needs_reference`). Methods with `forget_target` train on the forget aspects with that fixed text as
 target instead of the summaries.

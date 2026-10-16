@@ -66,46 +66,46 @@ def score_pairs(preds: List[str], refs: List[str], metric_names: List[str], cfg:
 
 
 def score_rows(rows: List[dict], metric_names: List[str], cfg: DictConfig) -> Dict[str, Dict[str, Dict[str, float]]]:
-    """Per-sample scores {group: {study_id: {metric: score}}} for prediction rows with keys study_id, view, aspects,
+    """Per-sample scores {group: {id: {metric: score}}} for prediction rows with keys id, view, aspects,
     reference (full answer text), references ({aspect: summary}) and prediction. Groups: "<view>/full",
     "<view>/aspect" and "aspect/<name>"."""
-    pairs = []  # (group, study_id, row index, kind) with kind "full" or an aspect name
+    pairs = []  # (group, id, row index, kind) with kind "full" or an aspect name
     preds, refs = [], []
     parsed_rows = []
     for k, row in enumerate(rows):
         parsed = parse_answer(row["prediction"], row["aspects"])
         parsed_rows.append(parsed)
-        pairs.append((f"{row['view']}/full", str(row["study_id"]), k, "full"))
+        pairs.append((f"{row['view']}/full", str(row["id"]), k, "full"))
         preds.append(row["prediction"])
         refs.append(row["reference"])
         for aspect in row["aspects"]:
-            pairs.append((f"aspect/{aspect}", str(row["study_id"]), k, aspect))
+            pairs.append((f"aspect/{aspect}", str(row["id"]), k, aspect))
             preds.append(parsed.get(aspect, ""))
             refs.append(row["references"][aspect])
     scores = score_pairs(preds, refs, metric_names, cfg)
 
     out: Dict[str, Dict[str, Dict[str, float]]] = {}
     per_row_aspect: Dict[int, Dict[str, List[float]]] = {}
-    for j, (group, study, k, kind) in enumerate(pairs):
+    for j, (group, rid, k, kind) in enumerate(pairs):
         values = {m: s[j] for m, s in scores.items()}
-        out.setdefault(group, {})[study] = values
+        out.setdefault(group, {})[rid] = values
         if kind != "full":
             acc = per_row_aspect.setdefault(k, {})
             for m, v in values.items():
                 acc.setdefault(m, []).append(v)
     for k, acc in per_row_aspect.items():
         row = rows[k]
-        out.setdefault(f"{row['view']}/aspect", {})[str(row["study_id"])] = {m: sum(v) / len(v) for m, v in acc.items()}
+        out.setdefault(f"{row['view']}/aspect", {})[str(row["id"])] = {m: sum(v) / len(v) for m, v in acc.items()}
     return out
 
 
 def summarize(scores: Dict[str, Dict[str, Dict[str, float]]]) -> Dict[str, Dict[str, float]]:
     """{group: {"n": samples, metric: mean score x100}} from per-sample scores."""
     out = {}
-    for group, by_study in scores.items():
-        metrics = sorted({m for v in by_study.values() for m in v})
-        out[group] = {"n": len(by_study),
-                      **{m: 100 * sum(v[m] for v in by_study.values()) / len(by_study) for m in metrics}}
+    for group, by_id in scores.items():
+        metrics = sorted({m for v in by_id.values() for m in v})
+        out[group] = {"n": len(by_id),
+                      **{m: 100 * sum(v[m] for v in by_id.values()) / len(by_id) for m in metrics}}
     return out
 
 

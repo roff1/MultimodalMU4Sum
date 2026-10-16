@@ -1,29 +1,36 @@
-"""Multi-aspect answers, the output format of MU4Sum: one block per aspect, `<aspect name>\\n<summary>`,
-blocks separated by a blank line. Used to build training targets and to read generated text back."""
+"""Multi-aspect answers: the JSON object the student is asked for (the same structure as the teacher's),
+`{"aspect_summaries": {"<aspect name>": "<summary>", ...}}`. Used to build training targets and to read generated
+text back (also when the generation was cut off or is not valid JSON)."""
+import json
 import re
 from difflib import SequenceMatcher
 from typing import Dict, List, Sequence, Tuple
 
+from mu4sum.preprocessing.prompts import ASPECT_SUMMARIES_KEY
+
 # Edit distance below which two aspect names are considered the same (as in the MU4Sum evaluation code).
 MAX_NAME_EDIT_DISTANCE = 3
 
-Span = Tuple[str, int, int]  # (aspect, start, end) character offsets of an aspect block inside the answer
+Span = Tuple[str, int, int]  # (aspect, start, end) character offsets of an aspect inside the answer
 
-
-def display_name(aspect: str) -> str:
-    """Aspect name as written in the answer: 'lungs_and_pleura' -> 'lungs and pleura'."""
-    return aspect.strip().replace("_", " ")
+_PREFIX = '{' + json.dumps(ASPECT_SUMMARIES_KEY) + ': {'
+_SUFFIX = '}}'
+_STRING_ENTRY = re.compile(r'"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
 
 def format_answer(summaries: Dict[str, str], aspects: Sequence[str]) -> Tuple[str, List[Span]]:
-    """The answer text for `aspects` (in this order) and the character span of each aspect block."""
-    parts, spans, pos = [], [], 0
-    for aspect in aspects:
-        block = f"{display_name(aspect)}\n{summaries[aspect].strip()}"
-        spans.append((aspect, pos, pos + len(block)))
-        parts.append(block)
-        pos += len(block) + 2  # the "\n\n" separator
-    return "\n\n".join(parts), spans
+    """The answer text for `aspects` (in this order) and the character span of each aspect.
+
+    A span is the `"aspect": "summary"` entry plus the delimiter that closes it (`,` or the final `}}`), so a token
+    fusing the closing quote with that delimiter belongs to the aspect it ends."""
+    entries = [f"{json.dumps(a, ensure_ascii=False)}: {json.dumps(summaries[a].strip(), ensure_ascii=False)}"
+               for a in aspects]
+    spans, pos = [], len(_PREFIX)
+    for i, (aspect, entry) in enumerate(zip(aspects, entries)):
+        last = i == len(entries) - 1
+        spans.append((aspect, pos, pos + len(entry) + (len(_SUFFIX) if last else 1)))
+        pos += len(entry) + 2  # the ", " separator
+    return _PREFIX + ", ".join(entries) + _SUFFIX, spans
 
 
 def _norm(text: str) -> str:
@@ -45,22 +52,25 @@ def _same_aspect(header: str, aspect: str) -> bool:
     return bool(h) and (h in a or a in h or _edit_distance(h, a) <= MAX_NAME_EDIT_DISTANCE)
 
 
-def _blocks(text: str) -> List[Tuple[str, str]]:
-    """(header, summary) pairs of a generated answer; the header is the first line of each blank-line block."""
+def _pairs(text: str) -> List[Tuple[str, str]]:
+    """(name, summary) pairs of every complete `"name": "text"` entry of a generated answer, in order."""
     pairs = []
-    for block in re.split(r"\n\s*\n", text.strip()):
-        lines = [line.strip() for line in block.strip().split("\n") if line.strip()]
-        if len(lines) >= 2:
-            pairs.append((lines[0], " ".join(lines[1:])))
+    for name, value in _STRING_ENTRY.findall(text):
+        try:
+            name, value = json.loads(f'"{name}"'), json.loads(f'"{value}"')
+        except json.JSONDecodeError:
+            continue
+        if value.strip():
+            pairs.append((name, " ".join(value.split())))
     return pairs
 
 
 def parse_answer(text: str, aspects: Sequence[str]) -> Dict[str, str]:
     """Map each requested aspect to the summary the model wrote for it (aspects it did not write are absent).
 
-    A block is assigned to the aspect whose name it repeats (substring or small edit distance); blocks left over
+    An entry is assigned to the aspect whose name it repeats (substring or small edit distance); entries left over
     are paired with the remaining aspects by name similarity, most similar first."""
-    blocks, free = _blocks(text), list(aspects)
+    blocks, free = _pairs(text), list(aspects)
     found: Dict[str, str] = {}
     unmatched = []
     for header, summary in blocks:

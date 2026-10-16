@@ -55,7 +55,7 @@ class TokenWiseCollator:
             answer = batch["labels"][i] != -100
             kinds = self.kinds(sample)
             if int(answer.sum()) != len(kinds):
-                raise ValueError(f"Study {sample['study_id']}: the answer has {int(answer.sum())} tokens in the batch "
+                raise ValueError(f"Record {sample['id']}: the answer has {int(answer.sum())} tokens in the batch "
                                  f"but {len(kinds)} when tokenized alone; token-wise labels would be misaligned")
             kind[i, answer] = torch.tensor(kinds, dtype=kind.dtype)
         batch["token_kind"] = kind

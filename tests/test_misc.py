@@ -18,19 +18,25 @@ def exact_match(preds, refs, cfg):
 exact_match.calls = []
 
 
-def row(study, view, aspects, prediction, summaries):
+def row(rid, view, aspects, prediction, summaries):
     from mu4sum.preprocessing.answers import format_answer
 
-    return {"study_id": study, "view": view, "aspects": aspects, "prediction": prediction,
+    return {"id": rid, "view": view, "aspects": aspects, "prediction": prediction,
             "references": summaries, "reference": format_answer(summaries, aspects)[0]}
 
 
+def answer(summaries):
+    from mu4sum.preprocessing.answers import format_answer
+
+    return format_answer(summaries, list(summaries))[0]
+
+
 ROWS = [
-    row(1, "forget", ["impression"], "impression\nfoo", {"impression": "foo"}),
-    row(2, "forget", ["impression"], "impression\nbar", {"impression": "foo"}),
+    row(1, "forget", ["impression"], answer({"impression": "foo"}), {"impression": "foo"}),
+    row(2, "forget", ["impression"], answer({"impression": "bar"}), {"impression": "foo"}),
     row(3, "forget", ["impression"], "", {"impression": "foo"}),
-    row(1, "retain", ["lungs", "heart"], "lungs\nL\n\nheart\nH", {"lungs": "L", "heart": "H"}),
-    row(2, "retain", ["lungs", "heart"], "lungs\nL", {"lungs": "L", "heart": "H"}),
+    row(1, "retain", ["lungs", "heart"], answer({"lungs": "L", "heart": "H"}), {"lungs": "L", "heart": "H"}),
+    row(2, "retain", ["lungs", "heart"], answer({"lungs": "L"}), {"lungs": "L", "heart": "H"}),
 ]
 
 
@@ -69,7 +75,7 @@ def test_paired_ttest_on_per_sample_scores():
     assert out["n"] == 10 and out["mean_diff"] == pytest.approx(20.45) and out["p"] < 1e-6
     same = paired_ttest(base, base)["g"]["m"]
     assert same["p"] == 1.0 and same["mean_diff"] == 0.0
-    assert paired_ttest({"g": {"1": {"m": 1.0}}}, {"g": {"1": {"m": 0.0}}}) == {}  # fewer than 2 shared studies
+    assert paired_ttest({"g": {"1": {"m": 1.0}}}, {"g": {"1": {"m": 0.0}}}) == {}  # fewer than 2 shared records
 
 
 def test_registry_errors_and_duplicates():

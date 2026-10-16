@@ -1,4 +1,4 @@
-# Token-wise GA&GD (MU4Sum's contribution): one pass over the answer of every study (all aspects); the tokens
+# Token-wise GA&GD (MU4Sum's contribution): one pass over the answer of every record (all aspects); the tokens
 # of the forget-aspect blocks are ascended (weight -beta), all the others descended (weight alpha).
 # MU4Sum: 1 epoch, lr 7e-5, alpha = beta = 1.
 training:

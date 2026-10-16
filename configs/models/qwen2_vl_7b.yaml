@@ -30,3 +30,19 @@ lora:
   alpha: 16
   dropout: 0.05
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"]
+
+# Prompt the model receives when it is fine-tuned / unlearned / evaluated (the student). Placeholders: {text},
+# {image_types} (own line: dropped when the dataset has `prompt.image_types: false`), {num_images}, {json_example}
+# (required: the JSON structure of the answer, built from the aspects asked, exactly as for the teacher).
+# Top-level on purpose: it is not part of the teacher-data fingerprint (only `model` and `generation` are).
+student_prompt: |-
+  You are an expert radiologist.
+
+  You are provided with {num_images} chest X-ray image(s) along with the clinical report: '{text}'.
+  Image types, in order: {image_types}.
+
+  Write a concise clinical summary of the images for each aspect listed in the JSON below. Base every summary on the images, stay compatible with the report and do not invent history or patient sex.
+
+  Output ONLY a valid JSON object with one flat text string per aspect (the descriptions below say what each summary must contain), using exactly this structure:
+
+  {json_example}

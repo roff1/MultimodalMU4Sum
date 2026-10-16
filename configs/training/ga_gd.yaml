@@ -1,5 +1,5 @@
 # GA+GD: gradient ascent on the forget aspects + gradient descent on the retain aspects (two views of the same
-# studies, mixed in each batch; forget samples weigh -1 and retain samples +alpha). MU4Sum: 1 epoch, lr 7e-5.
+# records, mixed in each batch; forget samples weigh -1 and retain samples +alpha). MU4Sum: 1 epoch, lr 7e-5.
 training:
   method: "ga_gd"           # loss = (-sum forget_nll + alpha * sum retain_nll) / batch size
   alpha: 1.0

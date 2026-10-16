@@ -6,31 +6,37 @@ dataset:
     type: "kaggle"
     handle: "masrursabab/iu-chest-x-rays-cleaned"
 
-  # Processor registered in mu4sum.preprocessing.processors.PROCESSORS.
-  # "grouped_csv": one CSV row per image, rows grouped by study id into a single
-  # record holding a variable number of images (e.g. frontal + lateral views).
-  processor: "grouped_csv"
-  csv_filename: "cleaned_dataset.csv"
+  # Processor registered with @PROCESSORS.register(...) in mu4sum/preprocessing/processors/<name>.py.
+  processor: "iu_xray"
 
-  # NOTE: column names below are a best guess for the Kaggle CSV and must be checked
-  # against the real file. A missing column raises an error listing the actual ones.
-  columns:
-    study_id: "uid"
-    image: "filename"
-    projection: "projection"     # optional (set to null if absent); used to order views
-    report:                      # report-field name -> CSV column (used as teacher context)
-      findings: "findings"
-      impression: "impression"
-
+  # Locations inside the downloaded dataset (relative to its root). Check them against the real layout:
+  # a wrong path raises an error naming the path it looked for.
+  csv_path: "cleaned_dataset.csv"
   images:
-    resolution: "320"            # options: 256 | 299 | 320 | 512
-    search_subdir: "{resolution}" # sub-folder of the raw root holding images (null = whole root)
+    path: "resized_images/{resolution}"   # folder with the images
+    resolution: "320"                     # options: 256 | 299 | 320 | 512
+
+  # CSV columns (a missing column raises an error listing the actual ones). One CSV row per image.
+  # The record id is the part of the image file name before the first "_" (e.g. CXR3468_IM-1684-0001-0001.png
+  # -> CXR3468); rows sharing it are the images of one record.
+  columns:
+    image: "image_id"            # image file name
+    image_type: "projection"     # optional (null = unknown); Frontal / Lateral
+    text: "org_caption"          # report text (identical on the rows of a record)
 
   filtering:
-    min_report_chars: 10
-    view_order: ["Frontal", "Lateral"]
+    min_text_chars: 10           # drop records whose text is shorter than this
+    images:
+      # none            -> keep every record, whatever its images (arbitrary number of images of any type)
+      # count           -> keep only records with exactly `count` images
+      # count_and_type  -> keep only records whose images are exactly those listed in `types` (type -> how many)
+      mode: "none"
+      count: 2                   # used by mode "count"
+      types:                     # used by mode "count_and_type"; e.g. only Frontal + Lateral pairs
+        Frontal: 1
+        Lateral: 1
 
-  # Splits are made at STUDY level (never per image) to avoid leakage between views.
+  # Splits are made at record level (never per image) to avoid leakage between images of one record.
   splits:
     train: 0.8
     validation: 0.1
@@ -55,30 +61,37 @@ aspects:
 forget_aspects: ["impression"]
 
 prompt:
-  # incremental: aspect descriptions are shown to the models (student prompt: "Aspect i/N: name" +
-  #              description; teacher JSON template: the description as placeholder value).
-  # names_only:  aspects are given by key only (no descriptions).
-  mode: "incremental"
-  teacher_system: "You are an expert radiologist. You answer only with valid JSON."
-  # Teacher prompt = teacher_intro + generic output rules + JSON template built from `aspects`
-  # (and `expansion`). Placeholders available in teacher_intro:
-  #   {image_info}  -> built per study from the number/views of its images, e.g. "Image 1 (Frontal) and Image 2 (Lateral)"
-  #   {source_text} -> the dataset text of the study (leave the placeholder out to not show it to the teacher)
-  teacher_intro: |-
-    You are provided with the following chest X-ray image(s): {image_info}, along with the official clinical report: '{source_text}'.
+  # Mention the type of each image (CSV `image_type`) in the teacher and student prompts. When false, every
+  # prompt line containing {image_types} is dropped.
+  image_types: true
+  # Single text sent to the teacher. Placeholders:
+  #   {text}          the record text
+  #   {image_types}   comma-separated image types (put it on a line of its own: the line is dropped if disabled)
+  #   {num_images}    number of images of the record
+  #   {json_example}  (required) JSON skeleton built from `aspects`: "aspect_summaries" {aspect name: description};
+  #                   put it at the end
+  teacher_prompt: |-
+    You are an expert radiologist.
 
-    Your task is to analyze both the images and the text to generate a comprehensive, highly detailed, and dense textual profile, synthesizing the visual evidence with the textual ground truth.
+    You are provided with {num_images} chest X-ray image(s) along with the official clinical report: '{text}'.
+    Image types, in order: {image_types}.
 
-    VISUAL-TEXTUAL GROUNDING: Your output must be fully supported by the images and compatible with the official report. You should describe objective visual elements present in the X-rays even if they are omitted in the short text report, as long as they do not contradict the report. Do not invent external medical history, symptoms, or the patient's sex.
+    Your task is to analyze both the images and the text to generate a comprehensive and dense clinical profile according to the specified aspects.
 
-    TERMINOLOGY & EXAMPLES: When describing findings, leverage precise spatial locations (e.g., 'right lower lobe', 'retrocardiac space', 'costophrenic angle'), visual characteristics (e.g., 'patchy opacity', 'increased density', 'blunting', 'radiolucency'), and objective hardware or medical devices (e.g., pacemakers or tubes) to ensure maximum clinical richness.
-  # Also ask the teacher to expand the dataset text; stored in the hybrid records as `expanded_text`.
-  expansion:
-    enabled: true
-    description: "Write a fluent, dense descriptive paragraph of 70-90 words synthesizing the visual findings and the official report, detailing anatomical structures, spatial positions, and medical devices without fabricating external history or patient sex"
-  student_task: >-
-    Look at the chest X-ray image(s) and write the summary for the following aspect(s).
+    GUIDELINES:
+
+    1. FORMAT: You must output ONLY a valid JSON object. Do not include any conversational text, markdown formatting (like ```json), or explanations outside the JSON block.
+
+    2. VISUAL-TEXTUAL GROUNDING: Your description must be fully supported by the images and compatible with the official report. Describe objective visual elements present in the X-rays even if omitted in the short text report, as long as they do not contradict it. Do not invent external medical history, symptoms, or patient sex.
+
+    3. FLAT TEXT VALUES ONLY: Every value in the JSON must be a single text string. Do not create nested sub-dictionaries inside the keys.
+
+    4. TERMINOLOGY: Leverage precise spatial locations (e.g., 'right lower lobe', 'retrocardiac space'), visual characteristics (e.g., 'patchy opacity', 'increased density'), and medical devices to ensure maximum clinical richness.
+
+    Use the exact following JSON structure:
+
+    {json_example}
 
 # Hybrid-data generation (teacher inference). Teacher model = configs/models/<name>.yaml.
 augmentation:
-  limit: null                    # debug: only process the first N studies
+  limit: null                    # debug: only process the first N records

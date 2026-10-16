@@ -1,25 +1,25 @@
-"""Teacher inference: images (+ dataset text) -> validated JSON of aspect summaries (+ expanded text).
+"""Teacher inference: images (+ record text) -> validated JSON of aspect summaries.
 
 The backend is a tiny interface so the retry/validation logic is independent of Hugging Face
 (and unit-testable without a GPU).
 """
 import json
-from typing import Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Dict, List, Protocol, Sequence, Tuple
 
 from omegaconf import DictConfig
 
-from mu4sum.preprocessing.prompts import ASPECT_SUMMARIES_KEY, EXPANDED_TEXT_KEY
+from mu4sum.preprocessing.prompts import ASPECT_SUMMARIES_KEY
 
 
 class TeacherBackend(Protocol):
     """Interface of a text generator that takes images plus a prompt and returns raw text."""
 
-    def generate(self, images: list, system: Optional[str], prompt: str, *,
+    def generate(self, images: list, prompt: str, *,
                  temperature: float, top_p: float, max_new_tokens: int) -> str: ...
 
 
 class TeacherFailure(RuntimeError):
-    """All attempts for one study produced unparsable / invalid JSON."""
+    """All attempts for one record produced unparsable / invalid JSON."""
 
     def __init__(self, errors: List[str]):
         super().__init__(f"{len(errors)} attempts failed: {errors[-1] if errors else ''}")
@@ -32,12 +32,11 @@ def _non_empty_text(value, what: str) -> str:
     return value.strip()
 
 
-def parse_teacher_json(text: str, keys: Sequence[str], expand: bool = False) -> Tuple[Dict[str, str], Optional[str]]:
-    """Extract the first JSON object in `text` and return (aspect summaries, expanded text or None).
+def parse_teacher_json(text: str, keys: Sequence[str]) -> Dict[str, str]:
+    """Extract the first JSON object in `text` and return its aspect summaries.
 
-    The object must hold `aspect_summaries` with every aspect as a non-empty string and, when
-    `expand` is set, a non-empty `expanded_text`. Extra keys are ignored. Raises ValueError
-    describing the first problem found."""
+    The object must hold `aspect_summaries` with every aspect as a non-empty string. Extra keys are ignored.
+    Raises ValueError describing the first problem found."""
     decoder = json.JSONDecoder()
     obj = None
     for start, ch in enumerate(text):
@@ -59,9 +58,7 @@ def parse_teacher_json(text: str, keys: Sequence[str], expand: bool = False) -> 
     missing = [k for k in keys if k not in block]
     if missing:
         raise ValueError(f"missing aspects: {missing}")
-    summaries = {k: _non_empty_text(block[k], f"aspect '{k}'") for k in keys}
-    expanded = _non_empty_text(obj.get(EXPANDED_TEXT_KEY), f"'{EXPANDED_TEXT_KEY}'") if expand else None
-    return summaries, expanded
+    return {k: _non_empty_text(block[k], f"aspect '{k}'") for k in keys}
 
 
 def attempt_temperature(gen: DictConfig, attempt: int) -> float:
@@ -69,23 +66,24 @@ def attempt_temperature(gen: DictConfig, attempt: int) -> float:
     return min(float(gen.base_temperature) + attempt * float(gen.temperature_step), float(gen.max_temperature))
 
 
-def generate_aspect_summaries(backend: TeacherBackend, images: list, system: Optional[str], prompt: str,
-                              keys: Sequence[str], gen: DictConfig,
-                              expand: bool = False) -> Tuple[Dict[str, str], Optional[str], dict]:
+def generate_aspect_summaries(backend: TeacherBackend, images: list, prompt: str,
+                              keys: Sequence[str], gen: DictConfig) -> Tuple[Dict[str, str], dict]:
     """Query the teacher until it returns a structurally valid JSON (1 + max_retries attempts).
 
-    Returns (aspect summaries, expanded text or None, {"attempts", "temperature"})."""
+    Returns (aspect summaries, {"attempts", "temperature"})."""
     errors: List[str] = []
     for attempt in range(int(gen.max_retries) + 1):
         temperature = attempt_temperature(gen, attempt)
-        raw = backend.generate(images, system, prompt, temperature=temperature,
+        raw = backend.generate(images, prompt, temperature=temperature,
                                top_p=float(gen.top_p), max_new_tokens=int(gen.max_new_tokens))
+        print("prompt", prompt)
+        print("output", raw)
         try:
-            summaries, expanded = parse_teacher_json(raw, keys, expand)
+            summaries = parse_teacher_json(raw, keys)
         except ValueError as e:
             errors.append(f"attempt {attempt} (T={temperature:.2f}): {e}")
             continue
-        return summaries, expanded, {"attempts": attempt + 1, "temperature": temperature}
+        return summaries, {"attempts": attempt + 1, "temperature": temperature}
     raise TeacherFailure(errors)
 
 
@@ -101,13 +99,13 @@ class HFTeacher:
         self.model.eval()
         self.nested = bool(model_cfg.processor.nested_images) if model_cfg.get("processor") else False
 
-    def generate(self, images, system, prompt, *, temperature, top_p, max_new_tokens) -> str:
+    def generate(self, images, prompt, *, temperature, top_p, max_new_tokens) -> str:
         """Return only the newly generated text; temperature 0 means greedy decoding."""
         import torch
 
         from mu4sum.models.chat import processor_inputs, render_prompt
 
-        text = render_prompt(self.processor, prompt, len(images), system)
+        text = render_prompt(self.processor, prompt, len(images))
         inputs = processor_inputs(self.processor, [text], [images], self.nested)
         inputs = inputs.to(next(self.model.parameters()).device)
         sampling = {"do_sample": True, "temperature": temperature, "top_p": top_p} if temperature > 0 \

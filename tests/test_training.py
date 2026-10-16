@@ -408,19 +408,19 @@ class FakeBase:
 
 def token_wise_sample():
     target, spans = format_answer({"a": "x y", "b": "z"}, ["a", "b"])
-    return {"study_id": "s1", "target": target, "spans": spans}
+    return {"id": "s1", "target": target, "spans": spans}
 
 
 def test_token_wise_collator_marks_forget_blocks_and_answer_tokens():
     sample = token_wise_sample()
-    # tokens: a \n x y \n\n | b \n z | <eos>
-    assert TokenWiseCollator(FakeBase(None), ["b"]).kinds(sample) == [1, 1, 1, 1, 1, -1, -1, -1, 1]
-    assert TokenWiseCollator(FakeBase(None), ["a"]).kinds(sample) == [-1, -1, -1, -1, 1, 1, 1, 1, 1]
+    # tokens: {"aspect_summaries": | {"a": | "x | y", | "b": | "z"}} | <eos>   (a = tokens 2-4, b = 5-6)
+    assert TokenWiseCollator(FakeBase(None), ["b"]).kinds(sample) == [1, 1, 1, 1, -1, -1, 1]
+    assert TokenWiseCollator(FakeBase(None), ["a"]).kinds(sample) == [1, -1, -1, -1, 1, 1, 1]
 
-    labels = torch.tensor([[-100, -100, *range(9), -100]])  # prompt, answer (9 tokens), padding
+    labels = torch.tensor([[-100, -100, *range(7), -100]])  # prompt, answer (7 tokens), padding
     out = TokenWiseCollator(FakeBase(labels), ["b"])([sample])
-    assert out["token_kind"].tolist() == [[0, 0, 1, 1, 1, 1, 1, -1, -1, -1, 1, 0]]
-    bad = torch.tensor([[-100, -100, *range(8), -100]])
+    assert out["token_kind"].tolist() == [[0, 0, 1, 1, 1, 1, -1, -1, 1, 0]]
+    bad = torch.tensor([[-100, -100, *range(6), -100]])
     with pytest.raises(ValueError, match="misaligned"):
         TokenWiseCollator(FakeBase(bad), ["b"])([sample])
 

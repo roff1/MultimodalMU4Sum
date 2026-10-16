@@ -18,7 +18,7 @@ All scripts take the minimum (model / dataset / method) plus optional `key.path=
 Overrides are strict: a typo fails; use `+key=value` to add a brand-new key.
 
 ```bash
-# 1. preprocessing: download -> process (group by study) -> teacher augmentation (Qwen2-VL-7B-Instruct)
+# 1. preprocessing: download -> process (raw data -> records) -> teacher augmentation (Qwen2-VL-7B-Instruct)
 #    skipped automatically when the data is already there
 python scripts/run_preprocess.py --dataset iu_xray --model qwen2_vl_7b
 python scripts/run_preprocess.py --dataset iu_xray            # download + process only
@@ -33,9 +33,6 @@ python scripts/run_train.py --model qwen2_5_vl_3b --teacher qwen2_vl_7b --datase
 # 3. evaluation on both train and test in one run: forget / retain views, full / aspect level, per aspect
 python scripts/run_evaluate.py --model qwen2_vl_7b --dataset iu_xray --method original
 python scripts/run_evaluate.py --model qwen2_vl_7b --dataset iu_xray --method ga_gd --tag a0.5
-
-# paired t-test of a method against Original (also written automatically by `run_evaluate` when Original exists)
-python scripts/run_compare.py --model qwen2_vl_7b --dataset iu_xray --method ga_gd --tag a0.5
 
 # copy light artifacts (configs, metrics, predictions) from Drive into the repo
 python scripts/sync_results.py --src "<Drive>/MU4Sum/outputs"
@@ -62,11 +59,11 @@ Run `original` first: every other method except `retrain` starts from it (`--ori
 
 ### Alignment with MU4Sum
 
-- **One multi-aspect answer per study**: the model is asked for a set of aspects in one prompt and answers `"<aspect name>\n<summary>"` blocks joined by blank lines. Sample-wise methods use two views of the same study, forget aspects and retain aspects; the token-wise methods use the full answer with per-token forget/retain labels.
+- **One multi-aspect answer per record**: the model is asked for a set of aspects in one prompt and answers with the JSON `{"aspect_summaries": {"<aspect name>": "<summary>", ...}}`, the structure the teacher produces. Sample-wise methods use two views of the same record, forget aspects and retain aspects; the token-wise methods use the full answer with per-token forget/retain labels.
 - **Answer-only loss** (deliberate request for this project): every loss, including the KL and NPO terms, is computed only on the answer tokens, per sample as a token mean; prompt, image and padding tokens are masked. Labels are removed before the forward pass, as in the reference code.
 - **NPO** follows the reference code: the log-ratio is the difference of per-sample *mean* token log-probabilities (not sums).
 - **Evaluation**: greedy decoding, 256 new tokens; ROUGE-1/2/L (no stemmer) and BERTScore F1 (roberta-large, English) at full-answer level and at aspect level (each aspect read back from the answer; a missing aspect scores 0), per view (forget / retain), per aspect, on train and test. Scores are stored per sample (`scores_<split>.json`); `metrics.json` holds the x100 means, `unlearning_summary` (retention vs. Original) and a paired t-test vs. Original.
-- **Aspect parsing** matches block names by substring / edit distance <= 3, then falls back to string similarity (`difflib`) instead of the FastText embeddings of the reference code.
+- **Aspect parsing** reads the `"name": "summary"` entries of the generated text (it also works on truncated or slightly malformed JSON) and matches names by substring / edit distance <= 3, then falls back to string similarity (`difflib`) instead of the FastText embeddings of the reference code.
 - **Not implemented**: LLM-as-judge evaluation and the random / adversarial / DPO / RMU / task-vector baselines.
 
 Stages skip themselves when their artifacts exist and are fresh. If the config that produced them changed, the run raises `StaleArtifactError` instead of silently mixing data; pass `--force` to rebuild.
@@ -75,8 +72,8 @@ Stages skip themselves when their artifacts exist and are fresh. If the config t
 
 ```
 base.yaml            seed, determinism, runtime (environment / data_root / output_root)
-models/*.yaml        HF model id, auto_class, dtype, quantization, processor kwargs, LoRA (r, alpha, target_modules), teacher generation + retry params
-datasets/*.yaml      source, processor, columns, aspects (+ descriptions), forget_aspects, prompt, splits, augmentation
+models/*.yaml        HF model id, auto_class, dtype, quantization, processor kwargs, LoRA (r, alpha, target_modules), teacher generation + retry params, student_prompt
+datasets/*.yaml      source, processor, csv/images locations, columns, filtering, splits, aspects (+ descriptions), forget_aspects, teacher prompt, augmentation
 training/*.yaml      one preset per method: hyper-parameters and method-specific knobs (alpha, beta, refusal_text)
 evaluation/*.yaml    metrics, generation settings (splits evaluated: train + test, fixed)
 ```
@@ -86,48 +83,123 @@ A copy is written, read-only, to the run folder (`config_<operation>.yaml` + `pr
 
 Outputs are organised hierarchically: `outputs/<model>/<dataset>/<method>[/<tag>]`, with evaluations in `<run>/evaluation/<eval_tag>`.
 
-**Teacher and student are independent.** The hybrid data lives in `processed/<dataset>/hybrid__<teacher>`, where the teacher is the `--model` given to `run_preprocess.py`. `run_train.py` / `run_evaluate.py` / `run_compare.py` read it from the teacher named by `--teacher` (default: the student `--model` itself, so using one model for both needs no flag). When the two differ, outputs go to `outputs/<student>/<dataset>__teacher-<teacher>/...` so runs on different teachers' data never mix. LoRA settings are per model (`lora:` in `configs/models/<model>.yaml`, override with `lora.r=4`), and sit outside the teacher-data fingerprint, so changing them never invalidates the generated data.
+**Teacher and student are independent.** The hybrid data lives in `processed/<dataset>/hybrid__<teacher>`, where the teacher is the `--model` given to `run_preprocess.py`. `run_train.py` / `run_evaluate.py` read it from the teacher named by `--teacher` (default: the student `--model` itself, so using one model for both needs no flag). When the two differ, outputs go to `outputs/<student>/<dataset>__teacher-<teacher>/...` so runs on different teachers' data never mix. LoRA settings are per model (`lora:` in `configs/models/<model>.yaml`, override with `lora.r=4`), and sit outside the teacher-data fingerprint, so changing them never invalidates the generated data.
 
-### Aspect prompts
+### Records and prompts
 
-Aspects, forget set and prompts live in the dataset YAML; no code refers to a specific dataset or aspect:
-
-```yaml
-aspects:
-  names: [heart_and_mediastinum, lungs_and_pleura, bones_soft_tissue_and_devices, impression]
-  descriptions: {impression: "..."}      # also used as the placeholder of each aspect in the teacher JSON
-forget_aspects: [impression]             # unlearning forgets these, retains every other aspect
-prompt:
-  mode: incremental                      # show aspect descriptions; `names_only` gives names only
-  teacher_system: "..."
-  teacher_intro: |-                      # role, task, dataset-specific guidance
-    ... {image_info} ... '{source_text}' ...
-  expansion: {enabled: true, description: "..."}
-  student_task: "..."
-```
-
-The teacher prompt has the same shape for every dataset: `teacher_intro` + generic output rules + a JSON template.
-`{image_info}` is built per study from its images ("Image 1 (Frontal) and Image 2 (Lateral)"); `{source_text}` is the dataset text of the study and is only shown if the placeholder is present. The teacher answers with
+Whatever the dataset, `process` produces one **record** per sample (`processed.jsonl`, plus its `split`) and `augment` turns it into a **hybrid record**:
 
 ```json
-{"expanded_text": "...", "aspect_summaries": {"<aspect>": "...", "...": "..."}}
+{"id": "...", "image_types": ["Frontal", "Lateral"], "image_paths": ["resized_images/320/a.png", "..."],
+ "text": "<the original record text>",
+ "aspect_summaries": {"<aspect 1>": "summary 1", "...": "..."}}
 ```
 
-`expanded_text` is requested (and stored in the hybrid records, not used for training) only if `prompt.expansion.enabled`. Invalid output triggers up to `generation.max_retries` retries with temperature `min(base_temperature + k * temperature_step, max_temperature)`. Studies that never validate are written to `failures.jsonl` and excluded.
+`image_types` has one entry per image (`""` when the dataset has no notion of image type) and `image_paths` are relative to the raw data root. Nothing else in the code refers to a specific dataset or aspect.
 
-`forget_aspects` sits outside `aspects` on purpose: it is not part of the artifact fingerprint, so changing it never invalidates the teacher data (it does change the config snapshot of training runs, so use `--tag` for a different forget set).
+Both the teacher (augmentation) and the student (training / evaluation) prompts are text templates filled from one record: `prompt(text, image_types, image_paths)`.
+The student answers with `{"aspect_summaries": {"<aspect 1>": "summary 1", ...}}` (only the aspects asked in that prompt), the same structure as the teacher.
 
-## Extending without touching the code
+| Template | Where | Placeholders |
+|---|---|---|
+| `prompt.teacher_prompt` | dataset preset | `{text}` `{image_types}` `{num_images}` `{json_example}` (required) |
+| `student_prompt` | model preset | `{text}` `{image_types}` `{num_images}` `{json_example}` (required) |
 
-- **New VLM** (as teacher, student or both): copy `configs/models/qwen2_vl_7b.yaml`, change `model.name` (and `auto_class`, `lora.target_modules` if the layer names differ).
-- **New dataset with the same shape** (CSV grouped by study): copy `configs/datasets/iu_xray.yaml`, set `source`, `columns`, `aspects`, `forget_aspects` and the `prompt` texts.
-- **New source / format / training method / metric**: add a function decorated with `@DOWNLOADERS.register("x")`, `@PROCESSORS.register("x")`, `@TRAINING_METHODS.register("x")` or `@METRICS.register("x")`, then reference its name from YAML.
+- `{image_types}` is the comma-separated list of the image types. It is only available when the dataset sets `prompt.image_types: true`; otherwise every line containing it is dropped, so keep it on a line of its own.
+- `{json_example}` (teacher and student) is built from the preset in the same way: `{"aspect_summaries": {aspect name: description}}`, with `aspects.names` / `aspects.descriptions`. For the student only the aspects asked in that prompt are listed. Put it at the end of the prompt.
+- A placeholder that does not exist fails loudly instead of being silently left in the text.
+
+The teacher answers with
+
+```json
+{"aspect_summaries": {"<aspect>": "...", "...": "..."}}
+```
+
+The teacher never rewrites the record text. Invalid output triggers up to `generation.max_retries` retries with temperature `min(base_temperature + k * temperature_step, max_temperature)`. Records that never validate are written to `failures.jsonl` and excluded.
+
+`forget_aspects` sits outside `aspects` on purpose: it is not part of the artifact fingerprint, so changing it never invalidates the teacher data (it does change the config snapshot of training runs, so use `--tag` for a different forget set). The same holds for `student_prompt`, which lives in the model preset.
+
+### Dataset filtering
+
+`dataset.filtering` is applied by the processor (through `common.rejection_reason`):
+
+```yaml
+filtering:
+  min_text_chars: 10            # drop records with a shorter text
+  images:
+    mode: "none"                # none | count | count_and_type
+    count: 2                    # mode "count": only records with exactly this many images
+    types: {Frontal: 1, Lateral: 1}   # mode "count_and_type": only records with exactly these images (type -> how many)
+```
+
+`none` keeps records with any number of images of any type; `count` keeps records with a given number of images; `count_and_type` keeps records whose images are exactly the listed types (for IU X-Ray, `Frontal` + `Lateral` pairs).
+
+## Extending the framework
+
+Every extension point is a name registered in a `Registry` (`mu4sum.utils.registry`) and referenced from a YAML preset. Run `pytest` after each of the steps below.
+
+### Add a dataset
+
+1. **Preset** `configs/datasets/<name>.yaml`: copy `iu_xray.yaml` and set
+   - `dataset.name` and `dataset.source` (`type: kaggle | huggingface | url | local` plus `handle` / `path`);
+   - `dataset.processor: "<name>"` (the name of the processor of step 2);
+   - the locations inside the downloaded data (`csv_path`, `images.path`, ...) and whatever the processor needs to read the raw files (`columns`, ...): these keys are free, only your processor reads them;
+   - `filtering` and `splits` (fractions summing to 1, applied per record);
+   - `aspects.names` / `aspects.descriptions`, `forget_aspects` (a non-empty subset of the names, not all of them);
+   - `prompt.image_types` (mention the image types or not) and `prompt.teacher_prompt` (see *Records and prompts*; it must contain `{json_example}`).
+2. **Processor** `src/mu4sum/preprocessing/processors/<name>.py` (modules of the package are imported automatically):
+
+   ```python
+   from mu4sum.preprocessing.processors.common import PROCESSORS, rejection_reason
+
+   @PROCESSORS.register("<name>")
+   def my_dataset(ds, raw_root):          # ds = cfg.dataset, raw_root = downloaded data folder (Path)
+       records = []
+       for sample in ...:                 # read the raw format
+           record = {"id": ..., "image_types": [...], "image_paths": [...], "text": ...}
+           if rejection_reason(record, ds.filtering) is None:
+               records.append(record)
+       return records
+   ```
+
+   The contract: `id` is a unique string, `image_types` and `image_paths` have the same length, `image_paths` are relative to `raw_root` (posix separators), `text` is the textual input. The pipeline checks it (`check_records`) and adds the `split`.
+   Helpers used by one dataset only stay in its module; helpers useful to several processors go in `processors/common.py`.
+3. **Run** `python scripts/run_preprocess.py --dataset <name> --model <teacher>`. A wrong path or column raises an error naming what was looked for. Start with `augmentation.limit=5` to check the teacher prompt and the output.
+4. **Test**: add a tiny fake raw folder like `tests/conftest.py` does and check the records.
+
+A new download source type is a function registered with `@DOWNLOADERS.register("<type>")` in `preprocessing/download.py`.
+
+### Add a model
+
+1. Copy `configs/models/qwen2_vl_7b.yaml` to `configs/models/<name>.yaml` and set:
+   - `model.name` (HF id), `model.auto_class`, `torch_dtype`, quantization and `processor` options (`nested_images: true` for processors expecting one image list per sample);
+   - `generation`: the teacher-side generation and retry parameters (used when the model is the teacher);
+   - `lora`: `r`, `alpha`, `dropout` and `target_modules` (module names depend on the architecture; check they do not match the vision tower unintentionally);
+   - `student_prompt`: the prompt the model receives in training / evaluation (see *Records and prompts*; it must contain `{json_example}`).
+2. Use it with `--model <name>`: as teacher (`run_preprocess.py`), as student (`run_train.py` / `run_evaluate.py`), or both. To train a student on another model's data pass `--teacher <teacher preset>`.
+3. If the architecture needs special loading code (not covered by `auto_class` + processor kwargs), extend `mu4sum/preprocessing/teacher.py` (teacher backend, `TeacherBackend.generate(images, prompt, *, temperature, top_p, max_new_tokens)`) and the model loading used by training.
+
+### Add an evaluation method (metric)
+
+1. In `src/mu4sum/evaluation/metrics.py` register a function that scores lists of predictions and references and returns one list of per-pair scores per metric name:
+
+   ```python
+   @METRICS.register("mymetric")
+   def mymetric(preds, refs, cfg):        # cfg = the `evaluation` section of the config
+       return {"mymetric": [score(p, r) for p, r in zip(preds, refs)]}   # scores in [0, 1]
+   ```
+
+   Pairs with an empty prediction score 0 without calling the function. Results are reported x100, at full-answer and aspect level, per view (forget / retain) and per aspect.
+2. Reference it from an evaluation preset: add `"mymetric"` to `evaluation.metrics` in `configs/evaluation/default_eval.yaml`, or copy that file to `configs/evaluation/<name>.yaml` (with the metric's own settings, like `bertscore.model_type`) and select it with `--eval <name>` (`--eval-tag` names the output folder).
+3. Add a test in `tests/test_misc.py` with a few hand-made prediction rows.
+
+A new training method works the same way: a factory registered with `@TRAINING_METHODS.register("<name>")` in `training/methods.py` plus a `configs/training/<name>.yaml` preset (`training.method: "<name>"`).
 
 ## Reproducibility
 
 - `set_seed` seeds python/numpy/torch/CUDA and enables deterministic algorithms (`deterministic: true`).
 - Batches are a pure function of `(seed, epoch)`; checkpoints store weights (LoRA adapter only), optimizer, scheduler, progress counters and RNG states. An interrupted run resumed from a checkpoint gives bit-identical weights to an uninterrupted one (verified on a toy model in `tests/test_training.py`).
-- Splits are made **per study**, never per image, so frontal/lateral views of an exam cannot leak across splits.
+- Splits are made **per record**, never per image, so the images of one record cannot leak across splits.
 
 ## Google Colab workflow
 
@@ -139,4 +211,4 @@ The teacher prompt has the same shape for every dataset: `teacher_intro` + gener
 
 - Tests cover config, prompts, teacher retry logic, the preprocessing pipeline (with a fake teacher), answer formatting/parsing, the trainer (resume equivalence, validation, best checkpoint), every training method's objective on toy models, and per-sample scoring.
 - The code paths that need real models (Qwen2-VL / Qwen2.5-VL-3B loading, LoRA training, generation, BERTScore, token offsets of the real tokenizer) have **not** been executed in CI/local tests: they need a GPU and model downloads. LoRA target names may also match modules of the vision tower.
-- The CSV column names in `configs/datasets/iu_xray.yaml` (`dataset.columns`) are a best guess for the Kaggle `masrursabab/iu-chest-x-rays-cleaned` file. If they are wrong, `process` fails and lists the actual columns; fix them in the YAML.
+- The CSV location, image folder and column names in `configs/datasets/iu_xray.yaml` (`dataset.csv_path`, `dataset.images`, `dataset.columns`) match the CSV columns (`image_id`, `projection`, `org_caption`) of the Kaggle `masrursabab/iu-chest-x-rays-cleaned` file; the CSV and image folder paths (`cleaned_dataset.csv`, `resized_images/<resolution>`) are still unverified. If they are wrong, `process` fails naming the missing path or listing the actual columns; fix them in the YAML.

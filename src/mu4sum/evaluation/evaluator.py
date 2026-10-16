@@ -1,7 +1,7 @@
-"""Evaluation stage: generate multi-aspect answers per view for every study of a split, then score them.
+"""Evaluation stage: generate multi-aspect answers per view for every record of a split, then score them.
 
 Views: with `forget_aspects` set, every model (pretrained base, original, retrain, unlearned...) is asked once for
-the forget aspects ("forget") and once for the retain aspects ("retain") of each study, exactly the two prompts
+the forget aspects ("forget") and once for the retain aspects ("retain") of each record, exactly the two prompts
 sample-wise unlearning trains on; without it a single "all" view asks for every aspect. Works for every training
 method (and the pretrained `base` model).
 """
@@ -14,12 +14,12 @@ from mu4sum.config.paths import eval_dir, run_dir
 from mu4sum.evaluation.metrics import score_rows, summarize
 from mu4sum.models.chat import processor_inputs, render_prompt
 from mu4sum.models.loader import load_model, load_processor
-from mu4sum.preprocessing.datasets import StudyDataset, load_hybrid, split_aspects
+from mu4sum.preprocessing.datasets import RecordDataset, load_hybrid, split_aspects
 from mu4sum.training.run import build_method, model_checkpoint
 from mu4sum.utils.io import read_jsonl, write_json_atomic, write_jsonl
 from mu4sum.utils.reproducibility import seed_worker, set_seed
 
-EVAL_SPLITS = ("train", "test")  # train = what unlearning acted on, test = generalisation to unseen studies
+EVAL_SPLITS = ("train", "test")  # train = what unlearning acted on, test = generalisation to unseen records
 METRICS_FILE = "metrics.json"
 
 
@@ -47,12 +47,12 @@ class GenerationCollator:
         """Render and tokenize prompts for a batch; return (model inputs, per-sample reference metadata)."""
         texts = [render_prompt(self.processor, s["prompt"], len(s["images"])) for s in samples]
         inputs = processor_inputs(self.processor, texts, [s["images"] for s in samples], self.nested)
-        meta = [{k: s[k] for k in ("study_id", "aspects", "references", "target")} for s in samples]
+        meta = [{k: s[k] for k in ("id", "aspects", "references", "target")} for s in samples]
         return inputs, meta
 
 
 def _generate(cfg: DictConfig, model, processor, dataset, view: str) -> list:
-    """Generate an answer per study (greedy if temperature is 0) and return them as prediction rows."""
+    """Generate an answer per record (greedy if temperature is 0) and return them as prediction rows."""
     import torch
     from torch.utils.data import DataLoader
 
@@ -70,7 +70,7 @@ def _generate(cfg: DictConfig, model, processor, dataset, view: str) -> list:
             inputs = inputs.to(device)
             out = model.generate(**inputs, max_new_tokens=int(ev.generation.max_new_tokens), **sampling)
             texts = processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-            rows += [{"study_id": m["study_id"], "view": view, "aspects": m["aspects"], "reference": m["target"],
+            rows += [{"id": m["id"], "view": view, "aspects": m["aspects"], "reference": m["target"],
                       "references": m["references"], "prediction": t.strip()} for m, t in zip(meta, texts)]
     return rows
 
@@ -80,7 +80,7 @@ def _cached(path, views: dict) -> bool:
     if not path.exists():
         return False
     rows = list(read_jsonl(path))
-    ok = bool(rows) and all("view" in r and "references" in r for r in rows) and {r["view"] for r in rows} == set(views)
+    ok = bool(rows) and all("id" in r and "view" in r and "references" in r for r in rows) and {r["view"] for r in rows} == set(views)
     if not ok:
         print(f"[Evaluate] Ignoring {path}: not in the current (view, multi-aspect) format; regenerating")
     return ok
@@ -110,8 +110,8 @@ def run_evaluate(cfg: DictConfig) -> dict:
         for split in missing:
             rows = []
             for view, aspects in views.items():
-                dataset = StudyDataset(splits[split], image_root, cfg, aspects=aspects, limit=cfg.evaluation.limit)
-                print(f"[Evaluate] '{target}' on {len(dataset)} studies of '{split}', view '{view}'")
+                dataset = RecordDataset(splits[split], image_root, cfg, aspects=aspects, limit=cfg.evaluation.limit)
+                print(f"[Evaluate] '{target}' on {len(dataset)} records of '{split}', view '{view}'")
                 rows += _generate(cfg, model, processor, dataset, view)
             write_jsonl(out / predictions_file(split), rows)
     for split in set(EVAL_SPLITS) - set(missing):

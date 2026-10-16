@@ -1,4 +1,4 @@
-"""Student-side views of the hybrid dataset (training and evaluation): one sample per study."""
+"""Student-side views of the hybrid dataset (training and evaluation): one sample per record."""
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
@@ -30,13 +30,13 @@ def load_hybrid(cfg: DictConfig) -> Tuple["DatasetDict", Path]:  # noqa: F821
     return load_from_disk(str(directory / HF_DIRNAME)), image_root
 
 
-class StudyDataset:
-    """Map-style dataset (works with torch DataLoader): one sample per study, MU4Sum style.
+class RecordDataset:
+    """Map-style dataset (works with torch DataLoader): one sample per record, MU4Sum style.
 
-    The prompt asks for the `aspects` listed (all of them when None) and the target is one aspect-summary
-    block per aspect (see mu4sum.preprocessing.answers). Retain and forget sets are two views of the same
-    studies with disjoint aspects. `target_override` replaces every summary with a fixed text. Images are
-    opened lazily.
+    The input is the prompt built from (text, image_types, image_paths) asking for the `aspects` listed (all of
+    them when None) plus the images; the target is one aspect-summary block per aspect (see
+    mu4sum.preprocessing.answers). Retain and forget sets are two views of the same records with disjoint
+    aspects. `target_override` replaces every summary with a fixed text. Images are opened lazily.
     """
 
     def __init__(self, split, image_root: Path, cfg: DictConfig,
@@ -47,28 +47,28 @@ class StudyDataset:
         unknown = [a for a in self.aspects if a not in keys]
         if unknown:
             raise ValueError(f"Unknown aspect(s) {unknown}; dataset aspects are {keys}")
-        self.split, self.image_root, self.target_override = split, Path(image_root), target_override
-        self.prompt = build_student_prompt(cfg, self.aspects)
+        self.split, self.image_root, self.cfg, self.target_override = split, Path(image_root), cfg, target_override
         self.n = len(split) if limit is None else min(len(split), int(limit))
 
     def __len__(self) -> int:
         return self.n
 
     def meta(self, i: int) -> dict:
-        """study_id, aspects, reference summaries, target answer text and its aspect spans, without images."""
+        """id, aspects, reference summaries, target answer text and its aspect spans, without images."""
         record = self.split[i]
-        by_aspect = dict(zip(record["aspects"], record["aspect_summaries"]))
+        by_aspect = dict(record["aspect_summaries"])
         if self.target_override is not None:
             by_aspect = {a: self.target_override for a in self.aspects}
         target, spans = format_answer(by_aspect, self.aspects)
-        return {"study_id": record["study_id"], "aspects": self.aspects,
+        return {"id": record["id"], "aspects": self.aspects,
                 "references": {a: by_aspect[a] for a in self.aspects}, "target": target, "spans": spans}
 
     def __getitem__(self, i: int) -> dict:
-        """Return `meta(i)` plus the prompt and the loaded RGB images of study i."""
+        """Return `meta(i)` plus the prompt and the loaded RGB images of record i."""
         record = self.split[i]
-        return {**self.meta(i), "prompt": self.prompt,
-                "images": load_images(self.image_root, record["image_paths"])}
+        prompt = build_student_prompt(self.cfg, record["text"], record["image_types"], record["image_paths"],
+                                      self.aspects)
+        return {**self.meta(i), "prompt": prompt, "images": load_images(self.image_root, record["image_paths"])}
 
 
 def split_aspects(cfg: DictConfig) -> Tuple[list, list]:
