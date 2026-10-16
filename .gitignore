@@ -40,7 +40,7 @@ env/
 */.ipynb_checkpoints/*
 
 # --- Dati (scaricati/generati a runtime, mai versionati) ---
-data/
+data/raw/
 
 # --- Output: si versionano config, metriche e predizioni; mai i pesi ---
 outputs/**/checkpoints/
