@@ -20,7 +20,7 @@ SOURCE_FILE = "_source.json"
 @DOWNLOADERS.register("kaggle")
 def _download_kaggle(source: DictConfig, raw_dir: Path) -> Path:
     import os
-
+    print(f"os.environ[\"KAGGLEHUB_CACHE\"]={os.environ["KAGGLEHUB_CACHE"]}")
     # Keep the dataset next to our data root instead of ~/.cache (matters on Colab/Drive).
     os.environ.setdefault("KAGGLEHUB_CACHE", str(raw_dir / "_kagglehub"))
     import kagglehub
