@@ -96,6 +96,7 @@ def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Pat
     raw_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Download] Fetching '{source.type}' source...")
     root = DOWNLOADERS.get(source.type)(source, raw_dir)
+    print(root)
     write_json_atomic(marker, {"fingerprint": fp, "root": _to_stored(root, data_root),
                                "source": OmegaConf.to_container(source)})
     print(f"[Download] Raw data at {root}")
