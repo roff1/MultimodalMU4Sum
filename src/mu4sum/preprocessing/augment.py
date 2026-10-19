@@ -6,7 +6,7 @@ text (the teacher never rewrites it). Records are appended to a JSONL file one b
 Records whose JSON stays invalid after all retries go to failures.jsonl.
 """
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from omegaconf import DictConfig
 from tqdm import tqdm
@@ -30,6 +30,26 @@ def load_images(image_root: Path, rel_paths: List[str]) -> list:
     return images
 
 
+def _counters(total: int, done: int, failed: int, new: int = 0) -> Dict[str, int]:
+    return {"done": done, "failed": failed, "new": new, "pending": total - done - failed}
+
+
+def plan_augmentation(cfg: DictConfig, records: List[dict], out_dir: Path) -> Tuple[List[dict], Dict[str, int]]:
+    """Records the teacher still has to process in this run (`augmentation.limit` applied), plus the current counters.
+
+    Cheap (reads only the ids already stored), so callers can tell whether the run has work left before loading
+    the model. An empty list means the augmentation is finished for the current limit, even if the dataset is not
+    complete (`counters["pending"]` > 0)."""
+    out_dir = Path(out_dir)
+    done = {r["id"] for r in read_jsonl(out_dir / RECORDS_FILE)}
+    failed = {r["id"] for r in read_jsonl(out_dir / FAILURES_FILE)}
+    pending = [r for r in records if r["id"] not in done and r["id"] not in failed]
+    limit: Optional[int] = cfg.augmentation.limit
+    if limit is not None:
+        pending = pending[: max(int(limit) - len(done), 0)]
+    return pending, _counters(len(records), len(done), len(failed))
+
+
 def augment_records(
     cfg: DictConfig,
     records: List[dict],
@@ -38,18 +58,11 @@ def augment_records(
     backend: TeacherBackend,
     image_loader: Callable[[Path, List[str]], list] = load_images,
 ) -> Dict[str, int]:
-    """Process pending records. Returns counters; `pending` > 0 means the run is not complete."""
+    """Process pending records. Returns counters; `pending` > 0 means the dataset is not complete."""
     out_dir = Path(out_dir)
     records_path, failures_path = out_dir / RECORDS_FILE, out_dir / FAILURES_FILE
-    done = {r["id"] for r in read_jsonl(records_path)}
-    failed = {r["id"] for r in read_jsonl(failures_path)}
-
+    pending, before = plan_augmentation(cfg, records, out_dir)
     keys = aspect_keys(cfg)
-    limit: Optional[int] = cfg.augmentation.limit
-
-    pending = [r for r in records if r["id"] not in done and r["id"] not in failed]
-    if limit is not None:
-        pending = pending[: max(int(limit) - len(done), 0)]
 
     n_new = n_failed = 0
     for record in tqdm(pending, desc="Teacher", unit="record"):
@@ -71,7 +84,4 @@ def augment_records(
         })
         n_new += 1
 
-    total_done = len(done) + n_new
-    total_failed = len(failed) + n_failed
-    return {"done": total_done, "failed": total_failed, "new": n_new,
-            "pending": len(records) - total_done - total_failed}
+    return _counters(len(records), before["done"] + n_new, before["failed"] + n_failed, n_new)

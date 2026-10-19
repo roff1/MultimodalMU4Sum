@@ -11,7 +11,7 @@ from omegaconf import DictConfig
 
 from mu4sum.config.loader import config_fingerprint
 from mu4sum.config.paths import hybrid_dir, processed_dir, raw_dir
-from mu4sum.preprocessing.augment import RECORDS_FILE, augment_records
+from mu4sum.preprocessing.augment import RECORDS_FILE, augment_records, plan_augmentation
 from mu4sum.preprocessing.download import download_dataset, image_root
 from mu4sum.preprocessing.processors import build_records
 from mu4sum.preprocessing.teacher import TeacherBackend
@@ -78,8 +78,11 @@ def stage_process(cfg: DictConfig, force: bool = False) -> Path:
 
 
 def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, force: bool = False) -> Path:
-    """Generate teacher summaries into the hybrid folder, resuming partial runs; skipped once complete.
+    """Generate teacher summaries into the hybrid folder, resuming partial runs.
 
+    The stage is skipped (model not even loaded) when no record is left to process under the current
+    `augmentation.limit` and the manifest already reflects the stored records. This is independent of the
+    manifest's `complete` flag, which only says whether the whole dataset has been augmented.
     Builds the HF dataset and manifest at the end; force=True deletes the hybrid folder first.
     """
     if cfg.get("model") is None:
@@ -90,10 +93,7 @@ def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, for
 
     if force and out.exists():
         shutil.rmtree(out)
-    if manifest_path.exists() and _check_fresh(manifest_path, fp, "Hybrid dataset", False) \
-            and read_json(manifest_path).get("complete"):
-        print(f"[Augment] Up to date ({out / HF_DIRNAME}), skipping.")
-        return out
+    has_manifest = manifest_path.exists() and _check_fresh(manifest_path, fp, "Hybrid dataset", False)
 
     progress_path = out / PROGRESS
     if progress_path.exists() and read_json(progress_path)["fingerprint"] != fp:
@@ -107,12 +107,22 @@ def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, for
         raise FileNotFoundError("Dataset not processed yet: run the 'process' stage first.")
     records = list(read_jsonl(proc_dir / PROCESSED_FILE))
 
-    if backend is None:
-        from mu4sum.preprocessing.teacher import HFTeacher
+    todo, counters = plan_augmentation(cfg, records, out)
+    if not todo:
+        if has_manifest:
+            m = read_json(manifest_path)
+            if m.get("num_records") == counters["done"] and m.get("num_failed") == counters["failed"]:
+                print(f"[Augment] Nothing left to do ({counters['done']} done, {counters['failed']} failed, "
+                      f"{counters['pending']} beyond the limit), skipping.")
+                return out
+        print(f"[Augment] {counters}")
+    else:
+        if backend is None:
+            from mu4sum.preprocessing.teacher import HFTeacher
 
-        backend = HFTeacher(cfg.model)
-    counters = augment_records(cfg, records, image_root(cfg), out, backend)
-    print(f"[Augment] {counters}")
+            backend = HFTeacher(cfg.model)
+        counters = augment_records(cfg, records, image_root(cfg), out, backend)
+        print(f"[Augment] {counters}")
 
     _finalize(out, fp, counters)
     return out

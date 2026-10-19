@@ -97,6 +97,21 @@ def test_resume_after_partial_run_continues_where_it_stopped(make_cfg):
     assert manifest["num_records"] == 20 and manifest["complete"] is True
 
 
+def test_rerun_with_limit_reached_does_nothing(make_cfg, monkeypatch):
+    limited = make_cfg(overrides=["augmentation.limit=5"])
+    run_preprocess(limited, backend=FakeTeacher(limited))
+    manifest_path = hybrid_dir(limited) / "manifest.json"
+    before = manifest_path.read_text()
+
+    def no_model(*args, **kwargs):
+        raise AssertionError("the teacher model must not be loaded when nothing is left to do")
+
+    monkeypatch.setattr("mu4sum.preprocessing.teacher.HFTeacher", no_model)
+    run_preprocess(limited, stages=["augment"])
+    assert manifest_path.read_text() == before
+    assert json.loads(before)["complete"] is False
+
+
 def test_teacher_failures_are_recorded_and_skipped(make_cfg):
     cfg = make_cfg(overrides=["generation.max_retries=1"])
     teacher = FakeTeacher(cfg, garbage_for_records=[3])
