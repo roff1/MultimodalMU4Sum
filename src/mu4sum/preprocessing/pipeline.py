@@ -46,6 +46,7 @@ def _check_fresh(manifest_path: Path, expected: str, what: str, force: bool) -> 
     """True if a valid artifact exists. Raises if one exists but was built with another config."""
     if force or not manifest_path.exists():
         return False
+    print(f"[Augment] read_json(manifest_path).get(\"fingerprint\")= {read_json(manifest_path).get("fingerprint")} expected={expected}")
     if read_json(manifest_path).get("fingerprint") != expected:
         raise StaleArtifactError(f"{what} in {manifest_path.parent} was built with a different configuration. "
                                  f"Re-run with --force to rebuild it.")
@@ -93,6 +94,7 @@ def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, for
 
     if force and out.exists():
         shutil.rmtree(out)
+    print(f"[Augment] manifest_path={manifest_path} manifest_path.exists()={manifest_path.exists()}")
     if manifest_path.exists() and _check_fresh(manifest_path, fp, "Hybrid dataset", False) \
             and read_json(manifest_path).get("complete"):
         print(f"[Augment] Up to date ({out / HF_DIRNAME}), skipping.")
