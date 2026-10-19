@@ -84,6 +84,7 @@ def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Pat
     if marker.exists() and not force: # Skip download if files exist and configuration matches (unless forced).
         info = read_json(marker)
         existing = raw_root(raw_dir, data_root)
+        print(f"[ROFF1] existing={existing}")
         if info.get("fingerprint") != fp:
             raise RuntimeError(f"Raw data in {raw_dir} was downloaded from a different source; "
                                f"re-run with --force to download again.")
@@ -96,7 +97,7 @@ def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Pat
     raw_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Download] Fetching '{source.type}' source...")
     root = DOWNLOADERS.get(source.type)(source, raw_dir)
-    print(root)
+    print(f"[ROFF1] root={root}")
     write_json_atomic(marker, {"fingerprint": fp, "root": _to_stored(root, data_root),
                                "source": OmegaConf.to_container(source)})
     print(f"[Download] Raw data at {root}")
