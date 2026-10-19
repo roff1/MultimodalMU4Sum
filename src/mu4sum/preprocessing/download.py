@@ -84,7 +84,7 @@ def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Pat
     if marker.exists() and not force: # Skip download if files exist and configuration matches (unless forced).
         info = read_json(marker)
         existing = raw_root(raw_dir, data_root)
-        print(f"[ROFF1] root={DOWNLOADERS.get(source.type)(source, raw_dir)} data_root={data_root} _to_stored(root, data_root)={_to_stored(root, data_root)}")
+        print(f"[ROFF1] root={DOWNLOADERS.get(source.type)(source, raw_dir)} data_root={data_root} _to_stored(root, data_root)={_to_stored(DOWNLOADERS.get(source.type)(source, raw_dir), data_root)}")
         print(f"[ROFF1] existing={existing} raw_dir={raw_dir} data_root={data_root}")
         if info.get("fingerprint") != fp:
             raise RuntimeError(f"Raw data in {raw_dir} was downloaded from a different source; "
