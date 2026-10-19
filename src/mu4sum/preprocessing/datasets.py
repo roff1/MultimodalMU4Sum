@@ -7,6 +7,7 @@ from omegaconf import DictConfig
 from mu4sum.config.paths import hybrid_dir
 from mu4sum.preprocessing.answers import format_answer
 from mu4sum.preprocessing.augment import load_images
+from mu4sum.preprocessing.download import image_root
 from mu4sum.preprocessing.pipeline import HF_DIRNAME, MANIFEST
 from mu4sum.preprocessing.prompts import aspect_keys, build_student_prompt
 from mu4sum.utils.io import read_json
@@ -24,10 +25,7 @@ def load_hybrid(cfg: DictConfig) -> Tuple["DatasetDict", Path]:  # noqa: F821
     if not manifest.get("complete"):
         print(f"[Data] WARNING: hybrid dataset in {directory} is incomplete "
               f"({manifest['num_records']} records, {manifest['num_failed']} failed).")
-    image_root = Path(manifest["image_root"])
-    if not image_root.is_absolute():
-        image_root = Path(cfg.runtime.data_root) / image_root
-    return load_from_disk(str(directory / HF_DIRNAME)), image_root
+    return load_from_disk(str(directory / HF_DIRNAME)), image_root(cfg)
 
 
 class RecordDataset:

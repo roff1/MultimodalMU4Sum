@@ -8,6 +8,7 @@ from typing import Optional
 
 from omegaconf import DictConfig, OmegaConf
 
+from mu4sum.config.paths import raw_dir
 from mu4sum.utils.io import read_json, write_json_atomic
 from mu4sum.utils.registry import Registry
 from mu4sum.utils.reproducibility import fingerprint
@@ -60,10 +61,8 @@ def _use_local(source: DictConfig, raw_dir: Path) -> Path:
 def _to_stored(root: Path, data_root: Path) -> str:
     """Path relative to data_root when inside it (portable across machines), else absolute."""
     try:
-        print(f"[ROFF1] root.resolve()={root.resolve()} root.resolve().relative_to(data_root.resolve())={root.resolve().relative_to(data_root.resolve())}")
         return str(root.resolve().relative_to(data_root.resolve()))
     except ValueError:
-        print("[ROFF1] error")
         return str(root.resolve())
 
 
@@ -76,6 +75,14 @@ def raw_root(raw_dir: Path, data_root: Path) -> Optional[Path]:
     return root if root.is_absolute() else Path(data_root) / root
 
 
+def image_root(cfg: DictConfig) -> Path:
+    """Folder the records' relative image paths refer to: the raw root of this machine's download."""
+    root = raw_root(raw_dir(cfg), Path(cfg.runtime.data_root))
+    if root is None:
+        raise FileNotFoundError("Raw data not downloaded yet: run the 'download' stage first.")
+    return root
+
+
 def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Path:
     """Fetch raw data unless a matching download is already recorded. Returns the raw root."""
     data_root = Path(cfg.runtime.data_root)
@@ -86,8 +93,6 @@ def download_dataset(cfg: DictConfig, raw_dir: Path, force: bool = False) -> Pat
     if marker.exists() and not force: # Skip download if files exist and configuration matches (unless forced).
         info = read_json(marker)
         existing = raw_root(raw_dir, data_root)
-        print(f"[ROFF1] root={DOWNLOADERS.get(source.type)(source, raw_dir)} data_root={data_root} _to_stored(root, data_root)={_to_stored(DOWNLOADERS.get(source.type)(source, raw_dir), data_root)}")
-        # print(f"[ROFF1] existing={existing} raw_dir={raw_dir} data_root={data_root}")
         if info.get("fingerprint") != fp:
             raise RuntimeError(f"Raw data in {raw_dir} was downloaded from a different source; "
                                f"re-run with --force to download again.")
