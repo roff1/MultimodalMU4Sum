@@ -63,7 +63,7 @@ def _check_fresh(manifest_path: Path, expected: str, what: str, force: bool) -> 
 def stage_process(cfg: DictConfig, force: bool = False) -> Path:
     """Build the processed records (with their split) from the raw data; skipped if current.
 
-    When `process` is the final stage the output is the final data (standard names, HF dataset included),
+    When `process` is the final stage the output is the final data (standard names),
     otherwise it is the intermediate `process_records.jsonl` that `augment` reads."""
     out = processed_dir(cfg)
     manifest_path = processed_file(cfg, "process", MANIFEST)
@@ -97,7 +97,7 @@ def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, for
     The stage is skipped (model not even loaded) when no record is left to process under the current
     `augmentation.limit` and the manifest already reflects the stored records. This is independent of the
     manifest's `complete` flag, which only says whether the whole dataset has been augmented.
-    Builds the HF dataset and manifest at the end; force=True deletes the previous augmented data first
+    Writes the manifest at the end; force=True deletes the previous augmented data first
     (the intermediate process files are kept).
     """
     if not cfg.augmentation.enabled:
