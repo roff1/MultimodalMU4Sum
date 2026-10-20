@@ -101,28 +101,21 @@ def test_versioned_snapshots_coexist(tmp_path):
     assert OmegaConf.load(pb).augmentation.limit == 5
 
 
-def test_teacher_defaults_to_the_model_and_changes_data_and_output_paths():
-    from mu4sum.config.paths import hybrid_dir
+def test_data_path_ignores_model_and_run_path_follows_it():
+    from mu4sum.config.paths import processed_dir, processed_file
 
-    same = load_config("train", model="qwen2_5_vl_3b", dataset="iu_xray", training="ga_gd",
-                       overrides=["runtime.output_root=/out", "runtime.data_root=/data"])
-    assert same.run.teacher == "qwen2_5_vl_3b"
-    assert hybrid_dir(same).as_posix().endswith("data/processed/iu_xray/hybrid__qwen2_5_vl_3b")
-    assert run_dir(same).as_posix().endswith("out/qwen2_5_vl_3b/iu_xray/ga_gd")
+    overrides = ["runtime.output_root=/out", "runtime.data_root=/data"]
+    a = load_config("train", model="qwen2_5_vl_3b", dataset="iu_xray", training="ga_gd", overrides=overrides)
+    b = load_config("train", model="qwen2_vl_7b", dataset="iu_xray", training="ga_gd", overrides=overrides)
+    assert processed_dir(a) == processed_dir(b) and processed_dir(a).as_posix().endswith("data/processed/iu_xray")
+    assert run_dir(a).as_posix().endswith("out/qwen2_5_vl_3b/iu_xray/ga_gd")
+    assert original_dir(a).as_posix().endswith("qwen2_5_vl_3b/iu_xray/original")
 
-    other = load_config("train", model="qwen2_5_vl_3b", teacher="qwen2_vl_7b", dataset="iu_xray", training="ga_gd",
-                        overrides=["runtime.output_root=/out", "runtime.data_root=/data"])
-    assert other.run.model == "qwen2_5_vl_3b" and other.run.teacher == "qwen2_vl_7b"
-    assert hybrid_dir(other).as_posix().endswith("data/processed/iu_xray/hybrid__qwen2_vl_7b")
-    assert run_dir(other).as_posix().endswith("out/qwen2_5_vl_3b/iu_xray__teacher-qwen2_vl_7b/ga_gd")
-    assert original_dir(other).as_posix().endswith("iu_xray__teacher-qwen2_vl_7b/original")
-
-    evaluation = load_config("evaluate", model="qwen2_5_vl_3b", teacher="qwen2_vl_7b", dataset="iu_xray")
-    assert evaluation.run.teacher == "qwen2_vl_7b"
-    with pytest.raises(FileNotFoundError, match="Available"):
-        load_config("train", model="qwen2_5_vl_3b", teacher="nope", dataset="iu_xray", training="original")
-    with pytest.raises(ValueError, match="teacher"):
-        load_config("preprocess", model="qwen2_vl_7b", teacher="qwen2_vl_7b", dataset="iu_xray")
+    assert processed_file(a, "augment", "manifest.json").name == "manifest.json"
+    assert processed_file(a, "process", "manifest.json").name == "process_manifest.json"
+    plain = load_config("train", model="qwen2_vl_7b", dataset="iu_xray", training="ga_gd",
+                        overrides=[*overrides, "augmentation.enabled=false"])
+    assert processed_file(plain, "process", "records.jsonl").name == "records.jsonl"
 
 
 def test_lora_settings_belong_to_the_model_and_do_not_touch_the_teacher_fingerprint():

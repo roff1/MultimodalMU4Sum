@@ -14,7 +14,7 @@ from mu4sum.config.paths import eval_dir, run_dir
 from mu4sum.evaluation.metrics import score_rows, summarize
 from mu4sum.models.chat import processor_inputs, render_prompt
 from mu4sum.models.loader import load_model, load_processor
-from mu4sum.preprocessing.datasets import RecordDataset, load_hybrid, split_aspects
+from mu4sum.preprocessing.datasets import RecordDataset, load_processed, split_aspects
 from mu4sum.training.run import build_method, model_checkpoint
 from mu4sum.utils.io import read_jsonl, write_json_atomic, write_jsonl
 from mu4sum.utils.reproducibility import seed_worker, set_seed
@@ -105,7 +105,7 @@ def run_evaluate(cfg: DictConfig) -> dict:
             if adapter is None:
                 raise FileNotFoundError(f"No finished '{target}' model in {run_dir(cfg)}; run "
                                         f"`scripts/run_train.py --method {target}` first.")
-        splits, image_root = load_hybrid(cfg)
+        splits, image_root = load_processed(cfg)
         model, processor = load_model(cfg.model, adapter_dir=adapter), load_processor(cfg.model)
         for split in missing:
             rows = []

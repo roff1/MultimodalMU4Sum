@@ -4,34 +4,41 @@ from pathlib import Path
 from omegaconf import DictConfig
 
 
-def _slug(name) -> str:
-    return str(name).replace("/", "__")
-
-
 def raw_dir(cfg: DictConfig) -> Path:
     """Folder with the raw downloaded dataset."""
     return Path(cfg.runtime.data_root) / "raw" / cfg.dataset.name
 
 
+RECORDS_FILE = "records.jsonl"
+FAILURES_FILE = "failures.jsonl"
+MANIFEST = "manifest.json"
+PROGRESS = "progress.json"
+
+
 def processed_dir(cfg: DictConfig) -> Path:
-    """Folder with the processed (normalized) dataset."""
+    """Folder holding every stage's output for the dataset: intermediate files and the final data."""
     return Path(cfg.runtime.data_root) / "processed" / cfg.dataset.name
 
 
-def hybrid_dir(cfg: DictConfig) -> Path:
-    """Teacher-generated aspect summaries (one folder per teacher preset, whatever student uses them)."""
-    return processed_dir(cfg) / f"hybrid__{_slug(cfg.run.teacher)}"
+def final_stage(cfg: DictConfig) -> str:
+    """Last stage of the dataset's pipeline; its output is what training and evaluation read."""
+    return "augment" if cfg.augmentation.enabled else "process"
+
+
+def processed_file(cfg: DictConfig, stage: str, name: str) -> Path:
+    """File `name` (RECORDS_FILE, MANIFEST, ...) written by `stage` in the processed folder.
+
+    The final stage uses the standard name; an intermediate stage prefixes its own (process_records.jsonl),
+    so training and evaluation always read the standard names whatever stages produced them."""
+    prefix = "" if stage == final_stage(cfg) else f"{stage}_"
+    return processed_dir(cfg) / f"{prefix}{name}"
 
 
 def run_dir(cfg: DictConfig, method: str = None, tag: str = "__cfg__") -> Path:
-    """outputs/<model>/<dataset>[__teacher-<teacher>]/<method>[/<tag>]; the teacher is named only when it is
-    not the model itself, so runs on data from different teachers never share a folder."""
+    """outputs/<model>/<dataset>/<method>[/<tag>]."""
     method = method or cfg.run.method
     tag = cfg.run.tag if tag == "__cfg__" else tag
-    dataset = cfg.run.dataset
-    if cfg.run.teacher != cfg.run.model:
-        dataset = f"{dataset}__teacher-{_slug(cfg.run.teacher)}"
-    path = Path(cfg.runtime.output_root) / cfg.run.model / dataset / method
+    path = Path(cfg.runtime.output_root) / cfg.run.model / cfg.run.dataset / method
     return path / tag if tag else path
 
 

@@ -13,7 +13,6 @@ dependencies = [
     "numpy",
     "pandas",
     "pillow",
-    "datasets",
     "tqdm",
 ]
 

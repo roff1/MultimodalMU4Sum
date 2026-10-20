@@ -81,5 +81,5 @@ def save_provenance(cfg: DictConfig, directory, operation: str) -> None:
         "python": platform.python_version(),
         "platform": platform.platform(),
         "packages": {p: _version(p) for p in
-                     ("torch", "transformers", "peft", "datasets", "omegaconf", "bitsandbytes")},
+                     ("torch", "transformers", "peft", "omegaconf", "bitsandbytes")},
     })

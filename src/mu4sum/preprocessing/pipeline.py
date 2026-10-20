@@ -1,17 +1,22 @@
 """Stage orchestration: download -> process -> augment, each skipped when its artifacts are valid.
 
+Every stage writes into the same processed folder. The last stage of the dataset's pipeline (`augment`, or
+`process` when `augmentation.enabled` is false) writes the final data under the standard names (records.jsonl,
+manifest.json, progress.json) that training and evaluation read; earlier stages prefix theirs
+(process_records.jsonl, process_manifest.json), see `config.paths.processed_file`.
+
 An artifact is valid when its manifest fingerprint matches the current config. If it exists but the
 config changed, we refuse to silently reuse (or overwrite) it: pass force=True to recompute.
 """
-import shutil
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 from omegaconf import DictConfig
 
 from mu4sum.config.loader import config_fingerprint
-from mu4sum.config.paths import hybrid_dir, processed_dir, raw_dir
-from mu4sum.preprocessing.augment import RECORDS_FILE, augment_records, plan_augmentation
+from mu4sum.config.paths import (FAILURES_FILE, MANIFEST, PROGRESS, RECORDS_FILE, processed_dir, processed_file,
+                                 raw_dir)
+from mu4sum.preprocessing.augment import augment_records, plan_augmentation
 from mu4sum.preprocessing.download import download_dataset, image_root
 from mu4sum.preprocessing.processors import build_records
 from mu4sum.preprocessing.teacher import TeacherBackend
@@ -19,10 +24,6 @@ from mu4sum.utils.io import read_json, read_jsonl, write_json_atomic, write_json
 from mu4sum.utils.reproducibility import fingerprint
 
 STAGES = ("download", "process", "augment")
-PROCESSED_FILE = "processed.jsonl"
-MANIFEST = "manifest.json"
-PROGRESS = "progress.json"
-HF_DIRNAME = "hf"
 
 
 class StaleArtifactError(RuntimeError):
@@ -30,9 +31,16 @@ class StaleArtifactError(RuntimeError):
     pass
 
 
+def default_stages(cfg: DictConfig) -> List[str]:
+    """Every stage the dataset needs to reach its final data (augment only when `augmentation.enabled`)."""
+    return [*STAGES[:2], *(["augment"] if cfg.augmentation.enabled else [])]
+
+
 def process_fingerprint(cfg: DictConfig) -> str:
-    """Fingerprint of the config sections (dataset, seed) that determine the processed records."""
-    return config_fingerprint(cfg, "dataset", "seed")
+    """Fingerprint of the config sections that determine the processed records."""
+    # Without augmentation the processed records are the final data, so the aspects they carry matter too.
+    sections = ("dataset", "seed") if cfg.augmentation.enabled else ("dataset", "seed", "aspects")
+    return config_fingerprint(cfg, *sections)
 
 
 def augment_fingerprint(cfg: DictConfig) -> str:
@@ -53,59 +61,66 @@ def _check_fresh(manifest_path: Path, expected: str, what: str, force: bool) -> 
 
 
 def stage_process(cfg: DictConfig, force: bool = False) -> Path:
-    """Build the processed records (with their split) and the manifest from the raw data; skipped if current."""
+    """Build the processed records (with their split) from the raw data; skipped if current.
+
+    When `process` is the final stage the output is the final data (standard names, HF dataset included),
+    otherwise it is the intermediate `process_records.jsonl` that `augment` reads."""
     out = processed_dir(cfg)
-    manifest_path = out / MANIFEST
+    manifest_path = processed_file(cfg, "process", MANIFEST)
+    records_path = processed_file(cfg, "process", RECORDS_FILE)
     fp = process_fingerprint(cfg)
     if _check_fresh(manifest_path, fp, "Processed records", force):
-        print(f"[Process] Up to date ({out / PROCESSED_FILE}), skipping.")
+        print(f"[Process] Up to date ({records_path}), skipping.")
         return out
 
-    root = image_root(cfg)
-    records = build_records(cfg, root)
-    write_jsonl(out / PROCESSED_FILE, records)
+    records = build_records(cfg, image_root(cfg))
+    write_jsonl(records_path, records)
     split_counts: Dict[str, int] = {}
     for r in records:
         split_counts[r["split"]] = split_counts.get(r["split"], 0) + 1
-    write_json_atomic(manifest_path, {
-        "fingerprint": fp,
-        "num_records": len(records),
-        "num_images": sum(len(r["image_paths"]) for r in records),
-        "splits": split_counts,
-    })
-    print(f"[Process] {len(records)} records {split_counts} -> {out / PROCESSED_FILE}")
+    if cfg.augmentation.enabled:
+        write_json_atomic(manifest_path, {
+            "fingerprint": fp,
+            "num_records": len(records),
+            "num_images": sum(len(r["image_paths"]) for r in records),
+            "splits": split_counts,
+        })
+    else:
+        _finalize(cfg, fp, {"failed": 0, "pending": 0})
+    print(f"[Process] {len(records)} records {split_counts} -> {records_path}")
     return out
 
 
 def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, force: bool = False) -> Path:
-    """Generate teacher summaries into the hybrid folder, resuming partial runs.
+    """Generate teacher summaries from the processed records into the final data, resuming partial runs.
 
     The stage is skipped (model not even loaded) when no record is left to process under the current
     `augmentation.limit` and the manifest already reflects the stored records. This is independent of the
     manifest's `complete` flag, which only says whether the whole dataset has been augmented.
-    Builds the HF dataset and manifest at the end; force=True deletes the hybrid folder first.
+    Builds the HF dataset and manifest at the end; force=True deletes the previous augmented data first
+    (the intermediate process files are kept).
     """
+    if not cfg.augmentation.enabled:
+        raise ValueError("The 'augment' stage is disabled for this dataset (`augmentation.enabled` is false).")
     if cfg.get("model") is None:
         raise ValueError("The 'augment' stage needs a teacher model preset (--model).")
-    out = hybrid_dir(cfg)
-    manifest_path = out / MANIFEST
+    out = processed_dir(cfg)
+    manifest_path = processed_file(cfg, "augment", MANIFEST)
+    progress_path = processed_file(cfg, "augment", PROGRESS)
     fp = augment_fingerprint(cfg)
 
-    if force and out.exists():
-        shutil.rmtree(out)
-    has_manifest = manifest_path.exists() and _check_fresh(manifest_path, fp, "Hybrid dataset", False)
+    if force:
+        _clear_final(out)
+    has_manifest = manifest_path.exists() and _check_fresh(manifest_path, fp, "Augmented dataset", False)
 
-    progress_path = out / PROGRESS
     if progress_path.exists() and read_json(progress_path)["fingerprint"] != fp:
-        raise StaleArtifactError(f"Partial hybrid data in {out} comes from a different configuration. "
+        raise StaleArtifactError(f"Partial augmented data in {out} comes from a different configuration. "
                                  f"Re-run with --force to start over.")
-    out.mkdir(parents=True, exist_ok=True)
     write_json_atomic(progress_path, {"fingerprint": fp})
 
-    proc_dir = processed_dir(cfg)
-    if not (proc_dir / MANIFEST).exists():
+    if not processed_file(cfg, "process", MANIFEST).exists():
         raise FileNotFoundError("Dataset not processed yet: run the 'process' stage first.")
-    records = list(read_jsonl(proc_dir / PROCESSED_FILE))
+    records = list(read_jsonl(processed_file(cfg, "process", RECORDS_FILE)))
 
     todo, counters = plan_augmentation(cfg, records, out)
     if not todo:
@@ -124,39 +139,36 @@ def stage_augment(cfg: DictConfig, backend: Optional[TeacherBackend] = None, for
         counters = augment_records(cfg, records, image_root(cfg), out, backend)
         print(f"[Augment] {counters}")
 
-    _finalize(out, fp, counters)
+    _finalize(cfg, fp, counters)
     return out
 
 
-def _finalize(out: Path, fp: str, counters: Dict[str, int]) -> None:
-    """Convert records.jsonl into a per-split HF dataset and write the manifest (complete if none pending).
+def _clear_final(out: Path) -> None:
+    """Delete the final data (standard names) of the processed folder, leaving the intermediate files alone."""
+    for name in (RECORDS_FILE, FAILURES_FILE, MANIFEST, PROGRESS):
+        (out / name).unlink(missing_ok=True)
 
-    The split is the key of the DatasetDict, so it is not repeated inside the rows."""
-    from datasets import Dataset, DatasetDict
 
-    records = list(read_jsonl(out / RECORDS_FILE))
-    by_split: Dict[str, list] = {}
-    for r in records:
-        by_split.setdefault(r["split"], []).append({k: v for k, v in r.items() if k != "split"})
-    if by_split:
-        dd = DatasetDict({name: Dataset.from_list(rows) for name, rows in sorted(by_split.items())})
-        hf_path = out / HF_DIRNAME
-        if hf_path.exists():
-            shutil.rmtree(hf_path)
-        dd.save_to_disk(str(hf_path))
+def _finalize(cfg: DictConfig, fp: str, counters: Dict[str, int]) -> None:
+    """Write the manifest of the final records.jsonl (complete if no record is pending)."""
+    out = processed_dir(cfg)
+    splits: Dict[str, int] = {}
+    for r in read_jsonl(out / RECORDS_FILE):
+        splits[r["split"]] = splits.get(r["split"], 0) + 1
     write_json_atomic(out / MANIFEST, {
         "fingerprint": fp,
+        "teacher": cfg.run.model if cfg.augmentation.enabled else None,
         "complete": counters["pending"] == 0,
-        "num_records": len(records),
+        "num_records": sum(splits.values()),
         "num_failed": counters["failed"],
-        "splits": {k: len(v) for k, v in by_split.items()},
+        "splits": splits,
     })
 
 
-def run_preprocess(cfg: DictConfig, stages: Iterable[str] = STAGES, force: bool = False,
+def run_preprocess(cfg: DictConfig, stages: Optional[Iterable[str]] = None, force: bool = False,
                    backend: Optional[TeacherBackend] = None) -> None:
-    """Run the requested stages in the order download, process, augment."""
-    stages = list(stages)
+    """Run the requested stages (default: all the dataset needs) in the order download, process, augment."""
+    stages = default_stages(cfg) if stages is None else list(stages)
     unknown = [s for s in stages if s not in STAGES]
     if unknown:
         raise ValueError(f"Unknown stage(s) {unknown}; choose from {STAGES}")

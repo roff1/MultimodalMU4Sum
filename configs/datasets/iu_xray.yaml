@@ -94,4 +94,8 @@ prompt:
 
 # Hybrid-data generation (teacher inference). Teacher model = configs/models/<name>.yaml.
 augmentation:
+  # false -> `process` is the last stage: its processor must already return `aspect_summaries` and its output
+  # takes the standard file names read by training / evaluation. true -> `augment` is the last stage and
+  # the `process` output is an intermediate file (process_*).
+  enabled: true
   limit: 500                    # debug: only process the first N records

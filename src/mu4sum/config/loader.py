@@ -80,7 +80,6 @@ def load_config(
     tag: Optional[str] = None,
     original_tag: Optional[str] = None,
     eval_tag: Optional[str] = None,
-    teacher: Optional[str] = None,
     overrides: Optional[Iterable[str]] = None,
 ) -> DictConfig:
     """Build the fully-resolved, read-only config for one operation.
@@ -90,8 +89,7 @@ def load_config(
     tag: sub-folder to keep several runs of the same method (e.g. a hyper-parameter sweep).
     original_tag: tag of the `original` run that finetune / default / unlearning methods start from and
         that evaluations compare against.
-    teacher: model preset that generated the hybrid data (train / evaluate only; defaults to `model`).
-        In `preprocess` the `model` preset is the teacher.
+    In `preprocess` the `model` preset is the teacher of the augmentation stage.
     """
     if operation not in OPERATIONS:
         raise ValueError(f"Unknown operation '{operation}'. Available: {sorted(OPERATIONS)}")
@@ -115,17 +113,10 @@ def load_config(
         chosen[group] = name
 
     method = BASE_TARGET if base_target else chosen.get("training")
-    if teacher is not None and operation == "preprocess":
-        raise ValueError("`preprocess` takes the teacher as its model preset (--model); `teacher` is for "
-                         "train / evaluate.")
-    teacher = teacher or chosen.get("model")
-    if teacher is not None and teacher != chosen.get("model"):
-        _load_preset("model", teacher)  # Fail early if a separate teacher preset doesn't exist.
     cfg = OmegaConf.merge(*parts)
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"run": {
         "operation": operation,
         "model": chosen.get("model"),
-        "teacher": teacher,
         "dataset": chosen.get("dataset"),
         "method": method,
         "tag": tag,

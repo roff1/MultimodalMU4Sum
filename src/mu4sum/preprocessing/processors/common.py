@@ -38,8 +38,11 @@ def rejection_reason(record: dict, filtering: DictConfig) -> Optional[str]:
     return None
 
 
-def check_records(records: List[dict], processor: str) -> None:
-    """Fail loudly when a processor breaks the record contract (keys, one type per image, unique ids)."""
+def check_records(records: List[dict], processor: str, aspects: Optional[List[str]] = None) -> None:
+    """Fail loudly when a processor breaks the record contract (keys, one type per image, unique ids).
+
+    `aspects` is given when the processor output is final (no augmentation): every record must then carry
+    `aspect_summaries` with exactly those aspects."""
     seen = set()
     for r in records:
         missing = [k for k in RECORD_KEYS if k not in r]
@@ -50,6 +53,9 @@ def check_records(records: List[dict], processor: str) -> None:
         if r["id"] in seen:
             raise ValueError(f"Processor '{processor}' produced the id {r['id']} twice")
         seen.add(r["id"])
+        if aspects is not None and list(r.get("aspect_summaries") or []) != list(aspects):
+            raise ValueError(f"Record {r['id']}: with `augmentation.enabled=false` the processor '{processor}' must "
+                             f"return `aspect_summaries` with the aspects {list(aspects)}")
 
 
 def assign_splits(records: List[dict], fractions: DictConfig, seed: int) -> List[dict]:

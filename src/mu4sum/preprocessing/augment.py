@@ -11,12 +11,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 from omegaconf import DictConfig
 from tqdm import tqdm
 
+from mu4sum.config.paths import FAILURES_FILE, RECORDS_FILE
 from mu4sum.preprocessing.prompts import aspect_keys, build_teacher_prompt
 from mu4sum.preprocessing.teacher import TeacherBackend, TeacherFailure, generate_aspect_summaries
 from mu4sum.utils.io import append_jsonl, read_jsonl
-
-RECORDS_FILE = "records.jsonl"
-FAILURES_FILE = "failures.jsonl"
 
 
 def load_images(image_root: Path, rel_paths: List[str]) -> list:

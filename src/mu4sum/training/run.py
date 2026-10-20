@@ -7,7 +7,7 @@ from omegaconf import DictConfig
 from mu4sum.config import save_run_config
 from mu4sum.config.paths import checkpoints_dir, original_dir, run_dir
 from mu4sum.models.loader import attach_lora, load_model, load_processor
-from mu4sum.preprocessing.datasets import RecordDataset, load_hybrid, split_aspects
+from mu4sum.preprocessing.datasets import RecordDataset, load_processed, split_aspects
 from mu4sum.training.batching import PairedDataset, mixed_plan, shuffled_plan
 from mu4sum.training.checkpoint import final_checkpoint
 from mu4sum.training.collate import PairedCollator, SFTCollator, TokenWiseCollator
@@ -52,11 +52,11 @@ def run_train(cfg: DictConfig) -> Optional[Path]:
         "forget_aspects": list(cfg.get("forget_aspects") or []),
     })
     forget_aspects, retain_aspects = split_aspects(cfg) if method.data != ALL else ([], None)
-    splits, image_root = load_hybrid(cfg)
+    splits, image_root = load_processed(cfg)
     sft = SFTCollator(load_processor(cfg.model), bool(cfg.model.processor.nested_images))
 
     def inputs(split: str):
-        """(dataset, collate_fn, batch plan) of this method on one split of the hybrid dataset."""
+        """(dataset, collate_fn, batch plan) of this method on one split of the processed dataset."""
         def view(aspects, target=None):
             return RecordDataset(splits[split], image_root, cfg, aspects=aspects, target_override=target)
 

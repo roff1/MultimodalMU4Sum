@@ -1,31 +1,34 @@
-"""Student-side views of the hybrid dataset (training and evaluation): one sample per record."""
+"""Student-side views of the final processed dataset (training and evaluation): one sample per record."""
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from omegaconf import DictConfig
 
-from mu4sum.config.paths import hybrid_dir
+from mu4sum.config.paths import MANIFEST, RECORDS_FILE, processed_dir
 from mu4sum.preprocessing.answers import format_answer
 from mu4sum.preprocessing.augment import load_images
 from mu4sum.preprocessing.download import image_root
-from mu4sum.preprocessing.pipeline import HF_DIRNAME, MANIFEST
 from mu4sum.preprocessing.prompts import aspect_keys, build_student_prompt
-from mu4sum.utils.io import read_json
+from mu4sum.utils.io import read_json, read_jsonl
 
 
-def load_hybrid(cfg: DictConfig) -> Tuple["DatasetDict", Path]:  # noqa: F821
-    """Load the teacher-generated dataset and the root its relative image paths refer to."""
-    from datasets import load_from_disk
+def load_processed(cfg: DictConfig) -> Tuple[Dict[str, List[dict]], Path]:
+    """Load the final records.jsonl grouped by split, and the root their relative image paths refer to.
 
-    directory = hybrid_dir(cfg)
-    manifest_path = directory / MANIFEST
-    if not manifest_path.exists() or not (directory / HF_DIRNAME).exists():
-        raise FileNotFoundError(f"Hybrid dataset not found in {directory}. Run scripts/run_preprocess.py first.")
+    Which stages produced it (process only, or process + augment) makes no difference here. The split is the
+    key of the result, so it is not repeated inside the records."""
+    directory = processed_dir(cfg)
+    manifest_path, records_path = directory / MANIFEST, directory / RECORDS_FILE
+    if not manifest_path.exists() or not records_path.exists():
+        raise FileNotFoundError(f"Processed dataset not found in {directory}. Run scripts/run_preprocess.py first.")
     manifest = read_json(manifest_path)
     if not manifest.get("complete"):
-        print(f"[Data] WARNING: hybrid dataset in {directory} is incomplete "
+        print(f"[Data] WARNING: processed dataset in {directory} is incomplete "
               f"({manifest['num_records']} records, {manifest['num_failed']} failed).")
-    return load_from_disk(str(directory / HF_DIRNAME)), image_root(cfg)
+    splits: Dict[str, List[dict]] = {}
+    for r in read_jsonl(records_path):
+        splits.setdefault(r["split"], []).append({k: v for k, v in r.items() if k != "split"})
+    return splits, image_root(cfg)
 
 
 class RecordDataset:

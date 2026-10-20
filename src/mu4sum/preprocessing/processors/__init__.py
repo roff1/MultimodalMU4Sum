@@ -10,7 +10,9 @@ are imported automatically). It reads whatever format the dataset ships in, appl
     image_paths: list[str]   # relative to raw_root
     text: str                # the textual input of the sample
 
-The pipeline then adds the `split` of each record (`build_records`).
+The pipeline then adds the `split` of each record (`build_records`). When the dataset has no augmentation
+(`augmentation.enabled: false`) the processor also returns `aspect_summaries` (aspect name -> summary, for every
+aspect of `aspects.names`), since no later stage will produce them.
 """
 import importlib
 import pkgutil
@@ -30,5 +32,5 @@ def build_records(cfg: DictConfig, raw_root: Path) -> List[dict]:
     """Run the dataset's registered processor, check its records, then assign each record to a split."""
     name = cfg.dataset.processor
     records = PROCESSORS.get(name)(cfg.dataset, raw_root)
-    check_records(records, name)
+    check_records(records, name, None if cfg.augmentation.enabled else list(cfg.aspects.names))
     return assign_splits(records, cfg.dataset.splits, cfg.seed)

@@ -19,16 +19,16 @@ Overrides are strict: a typo fails; use `+key=value` to add a brand-new key.
 
 ```bash
 # 1. preprocessing: download -> process (raw data -> records) -> teacher augmentation (Qwen2-VL-7B-Instruct)
-#    skipped automatically when the data is already there
+#    skipped automatically when the data is already there; augment runs only if `augmentation.enabled` (dataset preset)
 python scripts/run_preprocess.py --dataset iu_xray --model qwen2_vl_7b
-python scripts/run_preprocess.py --dataset iu_xray            # download + process only
+python scripts/run_preprocess.py --dataset iu_xray --stages download process   # no teacher needed
 python scripts/run_preprocess.py --dataset iu_xray --model qwen2_vl_7b --stages augment --force
 
 # 2. training: one method per run (forget aspects are defined by the dataset preset, e.g. forget_aspects=[impression])
 python scripts/run_train.py --model qwen2_vl_7b --dataset iu_xray --method original training.lr=1e-4
 python scripts/run_train.py --model qwen2_vl_7b --dataset iu_xray --method ga_gd --tag a0.5 training.alpha=0.5
-# student different from the teacher: --model is the student, --teacher the preset that ran preprocessing
-python scripts/run_train.py --model qwen2_5_vl_3b --teacher qwen2_vl_7b --dataset iu_xray --method original
+# student different from the teacher: just use another --model, the processed data does not depend on it
+python scripts/run_train.py --model qwen2_5_vl_3b --dataset iu_xray --method original
 
 # 3. evaluation on both train and test in one run: forget / retain views, full / aspect level, per aspect
 python scripts/run_evaluate.py --model qwen2_vl_7b --dataset iu_xray --method original
@@ -83,11 +83,19 @@ A copy is written, read-only, to the run folder (`config_<operation>.yaml` + `pr
 
 Outputs are organised hierarchically: `outputs/<model>/<dataset>/<method>[/<tag>]`, with evaluations in `<run>/evaluation/<eval_tag>`.
 
-**Teacher and student are independent.** The hybrid data lives in `processed/<dataset>/hybrid__<teacher>`, where the teacher is the `--model` given to `run_preprocess.py`. `run_train.py` / `run_evaluate.py` read it from the teacher named by `--teacher` (default: the student `--model` itself, so using one model for both needs no flag). When the two differ, outputs go to `outputs/<student>/<dataset>__teacher-<teacher>/...` so runs on different teachers' data never mix. LoRA settings are per model (`lora:` in `configs/models/<model>.yaml`, override with `lora.r=4`), and sit outside the teacher-data fingerprint, so changing them never invalidates the generated data.
+**Processed data and teacher.** `data/raw/<dataset>` is the downloaded dataset, untouched. Every later stage writes into one folder, `data/processed/<dataset>`, and the *last* stage of the dataset's pipeline (`augment`, or `process` when `augmentation.enabled: false`) writes the final data under the standard names that training and evaluation read; earlier stages prefix their files with the stage name:
+
+```
+data/processed/<dataset>/
+  process_records.jsonl   process_manifest.json     intermediate (only when augment follows)
+  records.jsonl  manifest.json  progress.json  failures.jsonl     final data
+```
+
+Training and evaluation only read `records.jsonl` (grouped by its `split` field) and `manifest.json`, so they do not know (or care) which stages produced them. Only one final dataset exists per dataset name: re-running with another teacher (or any config change that affects the data) raises `StaleArtifactError` until `--force`, which rebuilds the final files and keeps the intermediate ones. The teacher is recorded in `manifest.json`. The student is just `--model`: LoRA settings are per model (`lora:` in `configs/models/<model>.yaml`, override with `lora.r=4`) and sit outside the data fingerprint, so changing them never invalidates the generated data.
 
 ### Records and prompts
 
-Whatever the dataset, `process` produces one **record** per sample (`processed.jsonl`, plus its `split`) and `augment` turns it into a **hybrid record**:
+Whatever the dataset, `process` produces one **record** per sample (plus its `split`) and `augment` turns it into a **hybrid record** by adding the teacher's `aspect_summaries`. A dataset whose processor already returns `aspect_summaries` sets `augmentation.enabled: false` and skips `augment`; the records have the same shape either way:
 
 ```json
 {"id": "...", "image_types": ["Frontal", "Lateral"], "image_paths": ["resized_images/320/a.png", "..."],
@@ -146,7 +154,8 @@ Every extension point is a name registered in a `Registry` (`mu4sum.utils.regist
    - the locations inside the downloaded data (`csv_path`, `images.path`, ...) and whatever the processor needs to read the raw files (`columns`, ...): these keys are free, only your processor reads them;
    - `filtering` and `splits` (fractions summing to 1, applied per record);
    - `aspects.names` / `aspects.descriptions`, `forget_aspects` (a non-empty subset of the names, not all of them);
-   - `prompt.image_types` (mention the image types or not) and `prompt.teacher_prompt` (see *Records and prompts*; it must contain `{json_example}`).
+   - `prompt.image_types` (mention the image types or not) and `prompt.teacher_prompt` (see *Records and prompts*; it must contain `{json_example}`);
+   - `augmentation.enabled`: `true` if a teacher must generate the aspect summaries, `false` if the processor returns them itself (then the teacher prompt is unused).
 2. **Processor** `src/mu4sum/preprocessing/processors/<name>.py` (modules of the package are imported automatically):
 
    ```python
@@ -162,7 +171,7 @@ Every extension point is a name registered in a `Registry` (`mu4sum.utils.regist
        return records
    ```
 
-   The contract: `id` is a unique string, `image_types` and `image_paths` have the same length, `image_paths` are relative to `raw_root` (posix separators), `text` is the textual input. The pipeline checks it (`check_records`) and adds the `split`.
+   The contract: `id` is a unique string, `image_types` and `image_paths` have the same length, `image_paths` are relative to `raw_root` (posix separators), `text` is the textual input. With `augmentation.enabled: false` every record must also carry `aspect_summaries` (one entry per `aspects.names`). The pipeline checks it (`check_records`) and adds the `split`.
    Helpers used by one dataset only stay in its module; helpers useful to several processors go in `processors/common.py`.
 3. **Run** `python scripts/run_preprocess.py --dataset <name> --model <teacher>`. A wrong path or column raises an error naming what was looked for. Start with `augmentation.limit=5` to check the teacher prompt and the output.
 4. **Test**: add a tiny fake raw folder like `tests/conftest.py` does and check the records.
@@ -176,7 +185,7 @@ A new download source type is a function registered with `@DOWNLOADERS.register(
    - `generation`: the teacher-side generation and retry parameters (used when the model is the teacher);
    - `lora`: `r`, `alpha`, `dropout` and `target_modules` (module names depend on the architecture; check they do not match the vision tower unintentionally);
    - `student_prompt`: the prompt the model receives in training / evaluation (see *Records and prompts*; it must contain `{json_example}`).
-2. Use it with `--model <name>`: as teacher (`run_preprocess.py`), as student (`run_train.py` / `run_evaluate.py`), or both. To train a student on another model's data pass `--teacher <teacher preset>`.
+2. Use it with `--model <name>`: as teacher (`run_preprocess.py`), as student (`run_train.py` / `run_evaluate.py`), or both.
 3. If the architecture needs special loading code (not covered by `auto_class` + processor kwargs), extend `mu4sum/preprocessing/teacher.py` (teacher backend, `TeacherBackend.generate(images, prompt, *, temperature, top_p, max_new_tokens)`) and the model loading used by training.
 
 ### Add an evaluation method (metric)

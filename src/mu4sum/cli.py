@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from mu4sum.config import available_presets, load_config, save_run_config
 from mu4sum.config.loader import BASE_TARGET
-from mu4sum.config.paths import hybrid_dir, processed_dir
+from mu4sum.config.paths import processed_dir
 from mu4sum.utils.reproducibility import set_seed
 
 
@@ -20,11 +20,6 @@ def _parser(description: str) -> argparse.ArgumentParser:
     return p
 
 
-def _add_teacher(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--teacher", default=None, choices=available_presets("model"),
-                   help="Model preset that generated the hybrid data (default: same as --model)")
-
-
 def _with_seed(overrides: List[str], seed: Optional[int]) -> List[str]:
     return [*overrides, f"seed={seed}"] if seed is not None else list(overrides)
 
@@ -34,19 +29,19 @@ def preprocess_main(argv=None) -> None:
     p = _parser("Preprocessing: download, process and augment (teacher) a dataset")
     p.add_argument("--dataset", required=True, choices=available_presets("dataset"))
     p.add_argument("--model", default=None, choices=available_presets("model"),
-                   help="Teacher model preset; without it only download+process run")
+                   help="Teacher model preset (needed by the augment stage, i.e. when augmentation.enabled)")
     p.add_argument("--stages", nargs="+", default=None, choices=["download", "process", "augment"])
     p.add_argument("--force", action="store_true", help="Recompute the selected stages even if artifacts exist")
     a = p.parse_args(argv)
 
-    from mu4sum.preprocessing.pipeline import run_preprocess
+    from mu4sum.preprocessing.pipeline import default_stages, run_preprocess
 
-    stages = a.stages or (["download", "process", "augment"] if a.model else ["download", "process"])
-    if "augment" in stages and not a.model:
-        p.error("the 'augment' stage needs --model (teacher preset)")
     cfg = load_config("preprocess", dataset=a.dataset, model=a.model, overrides=_with_seed(a.overrides, a.seed))
+    stages = a.stages or default_stages(cfg)
+    if "augment" in stages and not a.model:
+        p.error("the 'augment' stage needs --model (teacher preset); use --stages download process to skip it")
     set_seed(cfg.seed, cfg.deterministic)
-    save_run_config(cfg, hybrid_dir(cfg) if a.model else processed_dir(cfg), "preprocess", versioned=True)
+    save_run_config(cfg, processed_dir(cfg), "preprocess", versioned=True)
     run_preprocess(cfg, stages, force=a.force)
 
 
@@ -56,7 +51,6 @@ def train_main(argv=None) -> None:
     p.add_argument("--model", required=True, choices=available_presets("model"))
     p.add_argument("--dataset", required=True, choices=available_presets("dataset"))
     p.add_argument("--method", required=True, choices=available_presets("training"), help="Training method preset")
-    _add_teacher(p)
     p.add_argument("--original-tag", default=None,
                    help="Tag of the 'original' run that finetune / default / unlearning methods start from")
     a = p.parse_args(argv)
@@ -64,7 +58,7 @@ def train_main(argv=None) -> None:
     from mu4sum.training.run import run_train
 
     cfg = load_config("train", model=a.model, dataset=a.dataset, training=a.method, tag=a.tag,
-                      original_tag=a.original_tag, teacher=a.teacher, overrides=_with_seed(a.overrides, a.seed))
+                      original_tag=a.original_tag, overrides=_with_seed(a.overrides, a.seed))
     run_train(cfg)
 
 
@@ -75,7 +69,6 @@ def evaluate_main(argv=None) -> None:
     p.add_argument("--dataset", required=True, choices=available_presets("dataset"))
     p.add_argument("--method", default="original", choices=[BASE_TARGET, *available_presets("training")],
                    help="Training method whose model to score ('base' = pretrained model, no adapter)")
-    _add_teacher(p)
     p.add_argument("--eval", default=None, choices=available_presets("evaluation"), help="Evaluation preset")
     p.add_argument("--eval-tag", default=None, help="Output sub-folder name (default: the evaluation preset)")
     p.add_argument("--original-tag", default=None, help="Tag of the 'original' run used as baseline")
@@ -84,7 +77,7 @@ def evaluate_main(argv=None) -> None:
     from mu4sum.evaluation.evaluator import run_evaluate
 
     cfg = load_config("evaluate", model=a.model, dataset=a.dataset, evaluation=a.eval, training=a.method,
-                      tag=a.tag, original_tag=a.original_tag, teacher=a.teacher, eval_tag=a.eval_tag,
+                      tag=a.tag, original_tag=a.original_tag, eval_tag=a.eval_tag,
                       overrides=_with_seed(a.overrides, a.seed))
     run_evaluate(cfg)
 
