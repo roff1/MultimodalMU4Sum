@@ -82,8 +82,13 @@ def _answer(model, inputs) -> _Answer:
     targets = inputs["labels"][:, 1:]
     mask = targets != -100
     kind = inputs["token_kind"][:, 1:][mask] if "token_kind" in inputs else None
-    return _Answer(torch.log_softmax(logits[mask].float(), dim=-1), targets[mask], mask.nonzero()[:, 0],
-                   kind, targets.shape[0])
+    return _Answer(
+        torch.log_softmax(logits[mask].float(), dim=-1), 
+        targets[mask], 
+        mask.nonzero()[:, 0],
+        kind, 
+        targets.shape[0]
+    )
 
 
 def _per_sample_mean(values, sample, batch_size, weight=None):
@@ -133,26 +138,39 @@ def _sft_step(model, batch, reference):
 @TRAINING_METHODS.register("original")
 def original(cfg: DictConfig) -> TrainingMethod:
     """New LoRA adapter trained on every aspect, forget and retain alike."""
-    return TrainingMethod(_sft_step, data=ALL, init=FROM_BASE)
+    return TrainingMethod(_sft_step, 
+        data=ALL, 
+        init=FROM_BASE
+    )
 
 
 @TRAINING_METHODS.register("retrain")
 def retrain(cfg: DictConfig) -> TrainingMethod:
     """New LoRA adapter trained from the pretrained model on the retain aspects only."""
-    return TrainingMethod(_sft_step, data=RETAIN, init=FROM_BASE)
+    return TrainingMethod(_sft_step, 
+        data=RETAIN, 
+        init=FROM_BASE
+    )
 
 
 @TRAINING_METHODS.register("finetune")
 def finetune(cfg: DictConfig) -> TrainingMethod:
     """Original adapter trained further on the retain aspects only."""
-    return TrainingMethod(_sft_step, data=RETAIN, init=FROM_ORIGINAL)
+    return TrainingMethod(_sft_step, 
+        data=RETAIN, 
+        init=FROM_ORIGINAL
+    )
 
 
 @TRAINING_METHODS.register("default")
 def default(cfg: DictConfig) -> TrainingMethod:
     """Original fine-tuned on the forget aspects with every target replaced by `training.refusal_text`."""
-    return TrainingMethod(lambda model, batch, reference: (_nll(model, batch["forget"]).mean(), {}),
-                          data=FORGET, init=FROM_ORIGINAL, forget_target=str(cfg.refusal_text))
+    return TrainingMethod(
+        lambda model, batch, reference: (_nll(model, batch["forget"]).mean(), {}),
+        data=FORGET,
+        init=FROM_ORIGINAL,
+        forget_target=str(cfg.refusal_text)
+    )
 
 
 @TRAINING_METHODS.register("ga")
@@ -163,7 +181,11 @@ def ga(cfg: DictConfig) -> TrainingMethod:
         forget = _nll(model, batch["forget"])
         return -forget.mean(), _logs(forget_nll=forget)
 
-    return TrainingMethod(step, data=FORGET, init=FROM_ORIGINAL)
+    return TrainingMethod(
+        step, 
+        data=FORGET, 
+        init=FROM_ORIGINAL
+    )
 
 
 @TRAINING_METHODS.register("ga_gd")
@@ -179,7 +201,11 @@ def ga_gd(cfg: DictConfig) -> TrainingMethod:
         loss = (-(forget.sum() if forget is not None else 0.0) + alpha * (retain.sum() if retain is not None else 0.0)) / n
         return loss, _logs(forget_nll=forget, retain_nll=retain)
 
-    return TrainingMethod(step, data=FORGET_RETAIN, init=FROM_ORIGINAL)
+    return TrainingMethod(
+        step, 
+        data=FORGET_RETAIN, 
+        init=FROM_ORIGINAL
+    )
 
 
 @TRAINING_METHODS.register("ga_kd")
@@ -193,7 +219,12 @@ def ga_kd(cfg: DictConfig) -> TrainingMethod:
         kl = _kl(model, reference, batch["retain"]) if batch["retain"] is not None else None
         return -_mean(forget) + alpha * _mean(kl), _logs(forget_nll=forget, retain_kl=kl)
 
-    return TrainingMethod(step, data=FORGET_RETAIN, init=FROM_ORIGINAL, needs_reference=True)
+    return TrainingMethod(
+        step, 
+        data=FORGET_RETAIN, 
+        init=FROM_ORIGINAL, 
+        needs_reference=True
+    )
 
 
 @TRAINING_METHODS.register("npo")
@@ -216,7 +247,12 @@ def npo(cfg: DictConfig) -> TrainingMethod:
             penalty = -(2.0 / beta) * F.logsigmoid(-beta * log_ratio)
         return alpha * _mean(retain) + gamma * _mean(penalty), _logs(retain_nll=retain, forget_log_ratio=log_ratio)
 
-    return TrainingMethod(step, data=FORGET_RETAIN, init=FROM_ORIGINAL, needs_reference=True)
+    return TrainingMethod(
+        step, 
+        data=FORGET_RETAIN, 
+        init=FROM_ORIGINAL, 
+        needs_reference=True
+    )
 
 
 @TRAINING_METHODS.register("tw_ga_gd")
@@ -233,7 +269,11 @@ def tw_ga_gd(cfg: DictConfig) -> TrainingMethod:
         forget = a.kind < 0
         return per_sample.mean(), {"forget_token_nll": float(nll.detach()[forget].mean()) if forget.any() else 0.0}
 
-    return TrainingMethod(step, data=TOKENWISE, init=FROM_ORIGINAL)
+    return TrainingMethod(
+        step, 
+        data=TOKENWISE, 
+        init=FROM_ORIGINAL
+    )
 
 
 @TRAINING_METHODS.register("tw_ga_kd")
@@ -254,4 +294,9 @@ def tw_ga_kd(cfg: DictConfig) -> TrainingMethod:
         retain = a.kind > 0
         return per_sample.mean(), {"retain_token_kl": float(kl.detach()[retain].mean()) if retain.any() else 0.0}
 
-    return TrainingMethod(step, data=TOKENWISE, init=FROM_ORIGINAL, needs_reference=True)
+    return TrainingMethod(
+        step, 
+        data=TOKENWISE, 
+        init=FROM_ORIGINAL, 
+        needs_reference=True
+    )
