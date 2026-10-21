@@ -35,9 +35,9 @@ def make_cfg(tmp_path, raw_dataset):
         ]
         kwargs.setdefault("dataset", "iu_xray")
         if operation != "preprocess":
-            kwargs.setdefault("model", "qwen2_vl_7b")
+            kwargs.setdefault("model", "qwen2_5_vl_7b")
         elif "model" not in kwargs:
-            kwargs["model"] = "qwen2_vl_7b"
+            kwargs["model"] = "qwen2_5_vl_7b"
         return load_config(operation, overrides=overrides, **kwargs)
 
     return _make

@@ -6,10 +6,8 @@ The pipeline has three stages: preprocess -> train -> evaluate.
 import argparse
 from typing import List, Optional
 
-from mu4sum.config import available_presets, load_config, save_run_config
+from mu4sum.config import available_presets, load_config
 from mu4sum.config.loader import BASE_TARGET
-from mu4sum.config.paths import processed_dir
-from mu4sum.utils.reproducibility import set_seed
 
 
 def _parser(description: str) -> argparse.ArgumentParser:
@@ -40,8 +38,6 @@ def preprocess_main(argv=None) -> None:
     stages = a.stages or default_stages(cfg)
     if "augment" in stages and not a.model:
         p.error("the 'augment' stage needs --model (teacher preset); use --stages download process to skip it")
-    set_seed(cfg.seed, cfg.deterministic)
-    save_run_config(cfg, processed_dir(cfg), "preprocess", versioned=True)
     run_preprocess(cfg, stages, force=a.force)
 
 

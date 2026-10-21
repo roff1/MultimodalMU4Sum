@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 from mu4sum.config.loader import config_fingerprint
 from mu4sum.utils.environment import PROJECT_ROOT
 from mu4sum.utils.io import write_json_atomic
+from mu4sum.utils.reproducibility import set_seed
 
 
 class ImmutableConfigError(RuntimeError):
@@ -46,6 +47,16 @@ def save_run_config(cfg: DictConfig, directory, operation: str, versioned: bool 
     OmegaConf.save(cfg, path)
     os.chmod(path, stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
     save_provenance(cfg, directory, f"{operation}_{config_fingerprint(cfg)}" if versioned else operation)
+    return path
+
+
+def start_run(cfg: DictConfig, directory, operation: str, versioned: bool = False) -> Path:
+    """Beginning of every pipeline stage: save the immutable config snapshot, then seed all RNGs.
+
+    The snapshot goes first so a run whose config clashes with the one already in `directory` fails before doing
+    any work."""
+    path = save_run_config(cfg, directory, operation, versioned=versioned)
+    set_seed(cfg.seed, cfg.deterministic)
     return path
 
 

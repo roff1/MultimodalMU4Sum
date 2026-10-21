@@ -4,8 +4,8 @@ from typing import Optional
 
 from omegaconf import DictConfig
 
-from mu4sum.config import save_run_config
-from mu4sum.config.paths import checkpoints_dir, original_dir, run_dir
+from mu4sum.config import start_run
+from mu4sum.config.paths import checkpoints_dir, original_dir, train_dir
 from mu4sum.models.loader import attach_lora, load_model, load_processor
 from mu4sum.preprocessing.datasets import RecordDataset, load_processed, split_aspects
 from mu4sum.training.batching import PairedDataset, mixed_plan, shuffled_plan
@@ -14,7 +14,6 @@ from mu4sum.training.collate import PairedCollator, SFTCollator, TokenWiseCollat
 from mu4sum.training.methods import ALL, FROM_BASE, TRAINING_METHODS, TrainingMethod
 from mu4sum.training.trainer import EvalData, Trainer, TrainSpec
 from mu4sum.utils.io import read_json, write_json_atomic
-from mu4sum.utils.reproducibility import set_seed
 
 
 def build_method(cfg: DictConfig) -> TrainingMethod:
@@ -24,16 +23,15 @@ def build_method(cfg: DictConfig) -> TrainingMethod:
 
 def model_checkpoint(cfg: DictConfig) -> Optional[Path]:
     """Final adapter of the model this run's method produced (None while it is unfinished)."""
-    return final_checkpoint(checkpoints_dir(run_dir(cfg)))
+    return final_checkpoint(checkpoints_dir(train_dir(cfg)))
 
 
 def run_train(cfg: DictConfig) -> Optional[Path]:
     """Train the configured method on the train split and return its final checkpoint path.
 
     Methods starting from Original raise FileNotFoundError if it has not finished; writes lineage.json."""
-    out = run_dir(cfg)
-    save_run_config(cfg, out, "train")
-    set_seed(cfg.seed, cfg.deterministic)
+    out = train_dir(cfg)
+    start_run(cfg, out, "train")
 
     method, tcfg = build_method(cfg), cfg.training
     start = None

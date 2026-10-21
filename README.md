@@ -18,21 +18,21 @@ All scripts take the minimum (model / dataset / method) plus optional `key.path=
 Overrides are strict: a typo fails; use `+key=value` to add a brand-new key.
 
 ```bash
-# 1. preprocessing: download -> process (raw data -> records) -> teacher augmentation (Qwen2-VL-7B-Instruct)
+# 1. preprocessing: download -> process (raw data -> records) -> teacher augmentation (Qwen2.5-VL-7B-Instruct)
 #    skipped automatically when the data is already there; augment runs only if `augmentation.enabled` (dataset preset)
-python scripts/run_preprocess.py --dataset iu_xray --model qwen2_vl_7b
+python scripts/run_preprocess.py --dataset iu_xray --model qwen2_5_vl_7b
 python scripts/run_preprocess.py --dataset iu_xray --stages download process   # no teacher needed
-python scripts/run_preprocess.py --dataset iu_xray --model qwen2_vl_7b --stages augment --force
+python scripts/run_preprocess.py --dataset iu_xray --model qwen2_5_vl_7b --stages augment --force
 
 # 2. training: one method per run (forget aspects are defined by the dataset preset, e.g. forget_aspects=[impression])
-python scripts/run_train.py --model qwen2_vl_7b --dataset iu_xray --method original training.lr=1e-4
-python scripts/run_train.py --model qwen2_vl_7b --dataset iu_xray --method ga_gd --tag a0.5 training.alpha=0.5
+python scripts/run_train.py --model qwen2_5_vl_7b --dataset iu_xray --method original training.lr=1e-4
+python scripts/run_train.py --model qwen2_5_vl_7b --dataset iu_xray --method ga_gd --tag a0.5 training.alpha=0.5
 # student different from the teacher: just use another --model, the processed data does not depend on it
 python scripts/run_train.py --model qwen2_5_vl_3b --dataset iu_xray --method original
 
 # 3. evaluation on both train and test in one run: forget / retain views, full / aspect level, per aspect
-python scripts/run_evaluate.py --model qwen2_vl_7b --dataset iu_xray --method original
-python scripts/run_evaluate.py --model qwen2_vl_7b --dataset iu_xray --method ga_gd --tag a0.5
+python scripts/run_evaluate.py --model qwen2_5_vl_7b --dataset iu_xray --method original
+python scripts/run_evaluate.py --model qwen2_5_vl_7b --dataset iu_xray --method ga_gd --tag a0.5
 
 # copy light artifacts (configs, metrics, predictions) from Drive into the repo
 python scripts/sync_results.py --src "<Drive>/MU4Sum/outputs"
@@ -81,7 +81,14 @@ evaluation/*.yaml    metrics, generation settings (splits evaluated: train + tes
 `load_config(operation, ...)` knows which preset groups each operation needs (`preprocess`, `train`, `evaluate`), merges `base` + presets + CLI overrides, resolves the machine-specific `runtime` section and freezes the result.
 A copy is written, read-only, to the run folder (`config_<operation>.yaml` + `provenance_<operation>.json` with git commit and package versions). Re-running with a *different* effective config in the same folder fails: use `--tag` for a new run. The `runtime` section is excluded from the comparison, so a run started locally can be resumed on Colab.
 
-Outputs are organised hierarchically: `outputs/<model>/<dataset>/<method>[/<tag>]`, with evaluations in `<run>/evaluation/<eval_tag>`.
+Results are kept in two separate trees under `outputs/`:
+
+```
+outputs/training/<model>/<dataset>/<method>[/<tag>]/                checkpoints, train_log, config + provenance snapshot
+outputs/evaluation/<model>/<dataset>/<method>[/<tag>]/<eval_tag>/   predictions, scores, metrics.json
+```
+
+Every stage starts the same way (`config.start_run`): it saves the immutable config snapshot in its output folder (`outputs/training/...`, `outputs/evaluation/...`, `data/processed/<dataset>` for preprocessing) and seeds every RNG with `seed`.
 
 **Processed data and teacher.** `data/raw/<dataset>` is the downloaded dataset, untouched. Every later stage writes into one folder, `data/processed/<dataset>`, and the *last* stage of the dataset's pipeline (`augment`, or `process` when `augmentation.enabled: false`) writes the final data under the standard names that training and evaluation read; earlier stages prefix their files with the stage name:
 
@@ -180,7 +187,7 @@ A new download source type is a function registered with `@DOWNLOADERS.register(
 
 ### Add a model
 
-1. Copy `configs/models/qwen2_vl_7b.yaml` to `configs/models/<name>.yaml` and set:
+1. Copy `configs/models/qwen2_5_vl_7b.yaml` to `configs/models/<name>.yaml` and set:
    - `model.name` (HF id), `model.auto_class`, `torch_dtype`, quantization and `processor` options (`nested_images: true` for processors expecting one image list per sample);
    - `generation`: the teacher-side generation and retry parameters (used when the model is the teacher);
    - `lora`: `r`, `alpha`, `dropout` and `target_modules` (module names depend on the architecture; check they do not match the vision tower unintentionally);
@@ -219,5 +226,5 @@ A new training method works the same way: a factory registered with `@TRAINING_M
 ## Status / caveats
 
 - Tests cover config, prompts, teacher retry logic, the preprocessing pipeline (with a fake teacher), answer formatting/parsing, the trainer (resume equivalence, validation, best checkpoint), every training method's objective on toy models, and per-sample scoring.
-- The code paths that need real models (Qwen2-VL / Qwen2.5-VL-3B loading, LoRA training, generation, BERTScore, token offsets of the real tokenizer) have **not** been executed in CI/local tests: they need a GPU and model downloads. LoRA target names may also match modules of the vision tower.
+- The code paths that need real models (Qwen2.5-VL-7B / 3B loading, LoRA training, generation, BERTScore, token offsets of the real tokenizer) have **not** been executed in CI/local tests: they need a GPU and model downloads. LoRA target names may also match modules of the vision tower.
 - The CSV location, image folder and column names in `configs/datasets/iu_xray.yaml` (`dataset.csv_path`, `dataset.images`, `dataset.columns`) match the CSV columns (`image_id`, `projection`, `org_caption`) of the Kaggle `masrursabab/iu-chest-x-rays-cleaned` file; the CSV and image folder paths (`cleaned_dataset.csv`, `resized_images/<resolution>`) are still unverified. If they are wrong, `process` fails naming the missing path or listing the actual columns; fix them in the YAML.

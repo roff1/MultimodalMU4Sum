@@ -8,16 +8,16 @@ method (and the pretrained `base` model).
 
 from omegaconf import DictConfig
 
-from mu4sum.config import save_run_config
+from mu4sum.config import start_run
 from mu4sum.config.loader import BASE_TARGET
-from mu4sum.config.paths import eval_dir, run_dir
+from mu4sum.config.paths import eval_dir, train_dir
 from mu4sum.evaluation.metrics import score_rows, summarize
 from mu4sum.models.chat import processor_inputs, render_prompt
 from mu4sum.models.loader import load_model, load_processor
 from mu4sum.preprocessing.datasets import RecordDataset, load_processed, split_aspects
 from mu4sum.training.run import build_method, model_checkpoint
 from mu4sum.utils.io import read_jsonl, write_json_atomic, write_jsonl
-from mu4sum.utils.reproducibility import seed_worker, set_seed
+from mu4sum.utils.reproducibility import seed_worker
 
 EVAL_SPLITS = ("train", "test")  # train = what unlearning acted on, test = generalisation to unseen records
 METRICS_FILE = "metrics.json"
@@ -94,8 +94,7 @@ def run_evaluate(cfg: DictConfig) -> dict:
     method = None if target == BASE_TARGET else build_method(cfg)
     views = eval_views(cfg)
     out = eval_dir(cfg)
-    save_run_config(cfg, out, "evaluate")
-    set_seed(cfg.seed, cfg.deterministic)
+    start_run(cfg, out, "evaluate")
 
     missing = [s for s in EVAL_SPLITS if not _cached(out / predictions_file(s), views)]
     if missing:
@@ -103,7 +102,7 @@ def run_evaluate(cfg: DictConfig) -> dict:
         if method:
             adapter = model_checkpoint(cfg)
             if adapter is None:
-                raise FileNotFoundError(f"No finished '{target}' model in {run_dir(cfg)}; run "
+                raise FileNotFoundError(f"No finished '{target}' model in {train_dir(cfg)}; run "
                                         f"`scripts/run_train.py --method {target}` first.")
         splits, image_root = load_processed(cfg)
         model, processor = load_model(cfg.model, adapter_dir=adapter), load_processor(cfg.model)

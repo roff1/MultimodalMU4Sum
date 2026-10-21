@@ -1,7 +1,7 @@
 """Checkpointing that restores *everything* needed to continue a run as if it never stopped:
 weights, optimizer, LR scheduler, progress counters and all RNG states.
 
-Layout under <run_dir>/checkpoints/:
+Layout under <train_dir>/checkpoints/:
     step-0000200/    periodic resumable checkpoints (adapter + trainer_state.pt), last N kept
     best/            adapter with the lowest validation loss so far + best.json {step, eval_loss}
     final/           the finished model (adapter only) + DONE marker; this is what the next stage loads

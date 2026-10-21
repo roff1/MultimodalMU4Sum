@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List, Optional
 
 from omegaconf import DictConfig
 
+from mu4sum.config import start_run
 from mu4sum.config.loader import config_fingerprint
 from mu4sum.config.paths import (FAILURES_FILE, MANIFEST, PROGRESS, RECORDS_FILE, processed_dir, processed_file,
                                  raw_dir)
@@ -172,6 +173,7 @@ def run_preprocess(cfg: DictConfig, stages: Optional[Iterable[str]] = None, forc
     unknown = [s for s in stages if s not in STAGES]
     if unknown:
         raise ValueError(f"Unknown stage(s) {unknown}; choose from {STAGES}")
+    start_run(cfg, processed_dir(cfg), "preprocess", versioned=True)
     if "download" in stages:
         download_dataset(cfg, raw_dir(cfg), force=force)
     if "process" in stages:

@@ -44,6 +44,7 @@ data/raw/
 
 # --- Output: si versionano config, metriche e predizioni; mai i pesi ---
 outputs/**/checkpoints/
+outputs/download/
 outputs/**/hf/
 outputs/**/*.safetensors
 outputs/**/*.bin

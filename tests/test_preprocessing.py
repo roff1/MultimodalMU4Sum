@@ -172,17 +172,17 @@ def test_record_dataset_builds_one_multi_aspect_sample_per_record(make_cfg):
 
 
 def test_a_student_trains_on_data_generated_by_a_different_teacher(make_cfg):
-    run_preprocess(make_cfg(model="qwen2_vl_7b"), backend=FakeTeacher(make_cfg(model="qwen2_vl_7b")))
+    run_preprocess(make_cfg(model="qwen2_5_vl_7b"), backend=FakeTeacher(make_cfg(model="qwen2_5_vl_7b")))
     cfg = make_cfg("train", model="qwen2_5_vl_3b", training="ga_gd")
 
     splits, image_root = load_processed(cfg)  # same folder whatever the student: no teacher in the path
     assert len(splits["train"]) > 0
-    assert json.loads((processed_dir(cfg) / "manifest.json").read_text())["teacher"] == "qwen2_vl_7b"
+    assert json.loads((processed_dir(cfg) / "manifest.json").read_text())["teacher"] == "qwen2_5_vl_7b"
     assert RecordDataset(splits["train"], image_root, cfg)[0]["target"]
 
 
 def test_a_different_teacher_is_stale_until_forced(make_cfg):
-    run_preprocess(make_cfg(model="qwen2_vl_7b"), backend=FakeTeacher(make_cfg(model="qwen2_vl_7b")))
+    run_preprocess(make_cfg(model="qwen2_5_vl_7b"), backend=FakeTeacher(make_cfg(model="qwen2_5_vl_7b")))
     other = make_cfg(model="qwen2_5_vl_3b")
     with pytest.raises(StaleArtifactError):
         run_preprocess(other, stages=["augment"], backend=FakeTeacher(other))
@@ -199,6 +199,14 @@ def test_intermediate_files_are_prefixed_and_final_files_use_standard_names(make
     assert "num_images" in json.loads((out / "process_manifest.json").read_text())
     assert json.loads((out / "manifest.json").read_text())["complete"] is True
     assert not any(p.name.startswith("hybrid") for p in out.iterdir())
+
+
+def test_preprocessing_saves_its_config_snapshot_like_the_other_stages(make_cfg):
+    cfg = make_cfg()
+    run_preprocess(cfg, stages=["download"])
+    names = {p.name for p in processed_dir(cfg).iterdir()}
+    assert any(n.startswith("config_preprocess_") for n in names)
+    assert any(n.startswith("provenance_preprocess_") for n in names)
 
 
 def test_forcing_augment_keeps_the_intermediate_process_files(make_cfg):
